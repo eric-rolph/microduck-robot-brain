@@ -2,6 +2,11 @@
   <compiler angle="radian" autolimits="true"/>
   <option timestep="0.002" iterations="50" solver="Newton" gravity="0 0 -9.81"/>
 
+  <visual>
+    <global offwidth="1920" offheight="1080"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
   <default>
     <default class="microduck">
       <joint damping="0.05" frictionloss="0.01" armature="0.002"/>
