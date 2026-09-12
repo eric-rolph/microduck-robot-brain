@@ -17,6 +17,7 @@ import wave
 import cv2
 import mujoco
 import numpy as np
+import onnxruntime as ort
 from PIL import Image, ImageDraw, ImageFont
 
 # Ensure repository root is on sys.path
@@ -391,33 +392,48 @@ def build_and_render_video() -> None:
 
     # Actuator & backlash managers
     backlash_mgr = BacklashManager(model)
-    bam = BamM6ActuatorModel(num_actuators=model.nu, config=BamM6Config())
+    bam = BamM6ActuatorModel(num_actuators=model.nu, config=BamM6Config(stall_torque=0.96))
     world_state = WorldState()
 
-    # Reset robot to STAND2
-    mujoco.mj_resetData(model, data)
-    data.qpos[0:3] = [0.0, 0.0, 0.135]
-    data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
-    for i, adr in enumerate(backlash_mgr.servo_qpos_adr):
-        data.qpos[adr] = DEFAULT_POSE[i]
-    data.ctrl[:] = DEFAULT_POSE[: model.nu]
+    # Load official Pollen walking policy
+    walk_onnx_path = Path(__file__).parent.parent / "models" / "alpha_walking.onnx"
+    walk_sess = ort.InferenceSession(str(walk_onnx_path))
+    walk_in = walk_sess.get_inputs()[0].name
+    last_walk_action = np.zeros(14, dtype=np.float32)
+
+    joint_qpos_indices = [int(model.jnt_qposadr[model.actuator_trnid[i, 0]]) for i in range(model.nu)]
+    joint_qvel_indices = [int(model.jnt_dofadr[model.actuator_trnid[i, 0]]) for i in range(model.nu)]
+
+    # Reset robot to STAND2 keyframe and settle
+    key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "STAND2")
+    if key_id >= 0:
+        mujoco.mj_resetDataKeyframe(model, data, key_id)
+    else:
+        mujoco.mj_resetData(model, data)
+        data.qpos[0:3] = [0.0, 0.0, 0.12]
+        data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+        for i, adr in enumerate(backlash_mgr.servo_qpos_adr):
+            data.qpos[adr] = DEFAULT_POSE[i]
+        data.ctrl[:] = DEFAULT_POSE[: model.nu]
     mujoco.mj_forward(model, data)
+    for _ in range(25):
+        mujoco.mj_step(model, data)
     bam.reset(initial_targets=DEFAULT_POSE[: model.nu])
 
     # Camera presets for the 6 scenes
     CAM_PRESETS = [
         # Scene 0: Intent & Search (front perspective)
-        {"dist": 0.85, "elev": -18.0, "azim": 145.0, "lookat": [0.0, 0.0, 0.12]},
+        {"dist": 0.68, "elev": -14.0, "azim": 145.0},
         # Scene 1: Approach & Vision Debouncing (tracking 3/4 side)
-        {"dist": 1.05, "elev": -22.0, "azim": 125.0, "lookat": [0.15, 0.0, 0.12]},
-        # Scene 2: Rough Terrain Bumps (profile low angle)
-        {"dist": 0.95, "elev": -12.0, "azim": 90.0, "lookat": [0.55, 0.0, 0.10]},
+        {"dist": 0.80, "elev": -16.0, "azim": 125.0},
+        # Scene 2: Dynamic Push Disturbance Rejection & Stability Recovery (profile low angle)
+        {"dist": 0.72, "elev": -10.0, "azim": 90.0},
         # Scene 3: Pickup & BAM M6 Sag (close-up beak zoom)
-        {"dist": 0.62, "elev": -24.0, "azim": 135.0, "lookat": [0.30, 0.0, 0.06]},
+        {"dist": 0.52, "elev": -16.0, "azim": 135.0},
         # Scene 4: Emergency Stop & Head Tilt (front dramatic)
-        {"dist": 0.88, "elev": -15.0, "azim": 165.0, "lookat": [1.05, 0.0, 0.12]},
+        {"dist": 0.70, "elev": -12.0, "azim": 165.0},
         # Scene 5: Sit-Stand & Celebration (elevated full view)
-        {"dist": 0.98, "elev": -25.0, "azim": 140.0, "lookat": [0.0, 0.0, 0.11]},
+        {"dist": 0.78, "elev": -18.0, "azim": 140.0},
     ]
 
     # Spawn FFmpeg child process
@@ -455,12 +471,13 @@ def build_and_render_video() -> None:
         scene_idx = min(5, int(t_sec / 6.0))
         scene_prog = (t_sec % 6.0) / 6.0
 
-        # Camera interpolation
+        # Camera interpolation tracking robot trunk
         cam_cfg = CAM_PRESETS[scene_idx]
         camera.distance = cam_cfg["dist"]
         camera.elevation = cam_cfg["elev"]
-        camera.azimuth = cam_cfg["azim"] + math.sin(t_sec * 0.5) * 4.0
-        camera.lookat[:] = cam_cfg["lookat"]
+        camera.azimuth = cam_cfg["azim"] + math.sin(t_sec * 0.5) * 3.0
+        trunk_pos = data.xpos[trunk_id]
+        camera.lookat[:] = [trunk_pos[0], trunk_pos[1], trunk_pos[2] + 0.04]
 
         # Scene specific behaviors and brain states
         sim_data = {}
@@ -476,20 +493,23 @@ def build_and_render_video() -> None:
             sim_data["bt_expression"] = "ACTIVE"
             sim_data["stability"] = "HIGH"
             sim_data["roughness"] = "LOW"
-            sim_data["imu_variance"] = 0.12 + 0.05 * math.sin(t_sec * 6.0)
+            sim_data["imu_variance"] = 0.12 + 0.04 * math.sin(t_sec * 6.0)
             sim_data["debouncer_bits"] = [1, 0, 0, 1, 0] if scene_prog < 0.7 else [1, 1, 1, 1, 1]
             sim_data["ball_visible"] = scene_prog >= 0.7
             sim_data["twist_cmd"] = (0.0, 0.0, 0.5)
 
-            # In-place turn gait oscillation
-            turn_phase = t_sec * 8.0
-            target_positions[0] = 0.15 * math.sin(turn_phase)  # left hip yaw
-            target_positions[9] = -0.15 * math.sin(turn_phase)  # right hip yaw
-            target_positions[7] = 0.25 * math.sin(t_sec * 3.0)  # head yaw scan
-            target_positions[5] = 0.35 + 0.12 * math.cos(t_sec * 4.0)  # neck pitch
+            # Alert head scanning left-right with CoM counter-balance
+            target_positions[7] = 0.25 * math.sin(t_sec * 2.2)  # head yaw scan
+            target_positions[8] = 0.08 * math.cos(t_sec * 1.5)  # head roll
+            nod = 0.06 * math.sin(t_sec * 2.8)  # head nod
+            target_positions[6] = DEFAULT_POSE[6] + nod
+            target_positions[2] = DEFAULT_POSE[2] + nod * 0.22
+            target_positions[4] = DEFAULT_POSE[4] - nod * 0.22
+            target_positions[11] = DEFAULT_POSE[11] - nod * 0.22
+            target_positions[13] = DEFAULT_POSE[13] + nod * 0.22
 
         elif scene_idx == 1:
-            # Scene 2: Target Locked & Approach Walk
+            # Scene 2: Target Locked & Approach Walk via official alpha_walking policy
             sim_data["intent_text"] = '"Ducky, bring me the ball."'
             sim_data["parsed_json"] = '{"action": "FETCH", "target": "ball", "urgency": "MED"}'
             sim_data["bt_search"] = "SUCCESS"
@@ -498,18 +518,25 @@ def build_and_render_video() -> None:
             sim_data["bt_expression"] = "ACTIVE"
             sim_data["stability"] = "HIGH"
             sim_data["roughness"] = "LOW"
-            sim_data["imu_variance"] = 0.18 + 0.06 * math.sin(t_sec * 10.0)
+            sim_data["imu_variance"] = 0.18 + 0.05 * math.sin(t_sec * 10.0)
             sim_data["debouncer_bits"] = [1, 1, 1, 1, 1]
             sim_data["ball_visible"] = True
-            sim_data["twist_cmd"] = (0.22, 0.0, 0.0)
+            sim_data["twist_cmd"] = (0.10, 0.0, 0.0)
 
-            # Forward walk gait
-            walk_phase = t_sec * 10.0
-            target_positions[2] = DEFAULT_POSE[2] + 0.22 * math.sin(walk_phase)
-            target_positions[3] = DEFAULT_POSE[3] + 0.35 * max(0.0, -math.sin(walk_phase))
-            target_positions[11] = DEFAULT_POSE[11] - 0.22 * math.sin(walk_phase)
-            target_positions[12] = DEFAULT_POSE[12] + 0.35 * max(0.0, math.sin(walk_phase))
-            target_positions[6] = 0.25  # head locked down toward ball
+            # Evaluate official alpha_walking.onnx policy
+            ang_vel = data.sensordata[sensor_adr:sensor_adr + 3].copy().astype(np.float32)
+            quat = data.xquat[trunk_id].copy().astype(np.float32)
+            proj_g = quat_rotate_inverse(quat, np.array([0.0, 0.0, -1.0], dtype=np.float32))
+            q_rel = (data.qpos[joint_qpos_indices] - DEFAULT_POSE).astype(np.float32)
+            q_vel = data.qvel[joint_qvel_indices].copy().astype(np.float32)
+
+            walk_cmd = np.zeros(13, dtype=np.float32)
+            walk_cmd[0] = 0.10  # 0.10 m/s forward approach
+
+            obs = np.concatenate([ang_vel, proj_g, q_rel, q_vel, last_walk_action, walk_cmd]).astype(np.float32).reshape(1, -1)
+            action = walk_sess.run(None, {walk_in: obs})[0][0]
+            last_walk_action = action.copy()
+            target_positions = DEFAULT_POSE + action * 1.0
 
         elif scene_idx == 2:
             # Scene 3: Dynamic Push Disturbance Rejection & Stability Recovery
@@ -524,17 +551,22 @@ def build_and_render_video() -> None:
             sim_data["imu_variance"] = 0.78 + 0.15 * math.sin(t_sec * 14.0) if (scene_prog > 0.35 and scene_prog < 0.70) else 0.16
             sim_data["debouncer_bits"] = [1, 1, 1, 1, 1]
             sim_data["ball_visible"] = True
-            sim_data["twist_cmd"] = (0.15, 0.0, 0.0)
+            sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
-            # High-stepping gait with stabilized head
-            walk_phase = t_sec * 10.0
-            target_positions[2] = DEFAULT_POSE[2] + 0.22 * math.sin(walk_phase)
-            target_positions[3] = DEFAULT_POSE[3] + 0.38 * max(0.0, -math.sin(walk_phase))
-            target_positions[11] = DEFAULT_POSE[11] - 0.22 * math.sin(walk_phase)
-            target_positions[12] = DEFAULT_POSE[12] + 0.38 * max(0.0, math.sin(walk_phase))
-            # Head gestures strictly clamped to zero during disturbance
-            target_positions[7] = 0.0
-            target_positions[8] = 0.0
+            # Lateral push impulse at t = 14.2s (frame 426)
+            if f == int(FPS * 14.2):
+                data.qvel[1] += 0.20
+
+            if scene_prog > 0.35 and scene_prog < 0.70:
+                rec_p = (scene_prog - 0.35) / 0.35
+                decay = math.exp(-4.0 * rec_p) * math.cos(rec_p * 15.0)
+                target_positions[1] = DEFAULT_POSE[1] + 0.06 * decay
+                target_positions[10] = DEFAULT_POSE[10] + 0.06 * decay
+                target_positions[7] = 0.0
+                target_positions[8] = 0.0
+            else:
+                phase = t_sec * 6.0
+                target_positions[7] = 0.10 * math.sin(phase)
 
         elif scene_idx == 3:
             # Scene 4: Pickup & BAM M6 Coupled Motor Dynamics
@@ -551,16 +583,16 @@ def build_and_render_video() -> None:
             sim_data["ball_visible"] = True
             sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
-            # Deep crouch and beak dip to grasp ball
-            crouch = min(1.0, scene_prog * 2.5) if scene_prog < 0.6 else max(0.0, 1.0 - (scene_prog - 0.6) * 3.0)
-            target_positions[2] = DEFAULT_POSE[2] - 0.35 * crouch  # hip pitch
-            target_positions[3] = DEFAULT_POSE[3] + 0.55 * crouch  # knee flex
-            target_positions[4] = DEFAULT_POSE[4] - 0.20 * crouch  # ankle flex
-            target_positions[11] = DEFAULT_POSE[11] + 0.35 * crouch
-            target_positions[12] = DEFAULT_POSE[12] + 0.55 * crouch
-            target_positions[13] = DEFAULT_POSE[13] + 0.20 * crouch
-            target_positions[5] = 0.35 + 0.50 * crouch  # neck dip
-            target_positions[6] = 0.35 + 0.45 * crouch  # head dip
+            # Symmetrical counterbalanced crouch to reach down to ball
+            squat = math.sin(scene_prog * math.pi) * 0.35
+            target_positions[3] = DEFAULT_POSE[3] + 0.35 * squat
+            target_positions[4] = DEFAULT_POSE[4] + 0.18 * squat
+            target_positions[12] = DEFAULT_POSE[12] - 0.35 * squat
+            target_positions[13] = DEFAULT_POSE[13] - 0.18 * squat
+            target_positions[5] = DEFAULT_POSE[5] + 0.15 * squat
+            target_positions[6] = DEFAULT_POSE[6] + 0.12 * squat
+            target_positions[2] = DEFAULT_POSE[2] + 0.10 * squat
+            target_positions[11] = DEFAULT_POSE[11] - 0.10 * squat
 
         elif scene_idx == 4:
             # Scene 5: Deterministic Emergency Stop & Curious Head Tilt
@@ -578,10 +610,10 @@ def build_and_render_video() -> None:
             sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
             # Instant halt, then curious 18-degree head tilt examining obstacle
-            tilt_prog = min(1.0, max(0.0, (scene_prog - 0.2) * 3.0))
-            target_positions[8] = math.radians(20) * tilt_prog  # head roll
-            target_positions[7] = math.radians(-12) * tilt_prog  # head yaw
-            target_positions[6] = 0.20 * tilt_prog  # head pitch
+            tilt_prog = min(1.0, max(0.0, (scene_prog - 0.15) * 3.0))
+            target_positions[8] = math.radians(18) * tilt_prog  # head roll
+            target_positions[7] = math.radians(-10) * tilt_prog  # head yaw
+            target_positions[6] = DEFAULT_POSE[6] + 0.08 * tilt_prog
 
         elif scene_idx == 5:
             # Scene 6: Rest Sit-Stand & Celebration
@@ -598,35 +630,30 @@ def build_and_render_video() -> None:
             sim_data["ball_visible"] = True
             sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
-            # Sit down smoothly, hold, stand back up
             if scene_prog < 0.5:
-                sit_ratio = min(1.0, scene_prog * 3.0)
-                target_positions[2] = DEFAULT_POSE[2] - 0.45 * sit_ratio
-                target_positions[3] = DEFAULT_POSE[3] + 0.80 * sit_ratio
-                target_positions[11] = DEFAULT_POSE[11] + 0.45 * sit_ratio
-                target_positions[12] = DEFAULT_POSE[12] + 0.80 * sit_ratio
-                target_positions[5] = 0.55  # head raised looking up
+                sit = min(1.0, scene_prog * 2.5)
+                target_positions[3] = DEFAULT_POSE[3] + 0.40 * sit
+                target_positions[4] = DEFAULT_POSE[4] + 0.20 * sit
+                target_positions[12] = DEFAULT_POSE[12] - 0.40 * sit
+                target_positions[13] = DEFAULT_POSE[13] - 0.20 * sit
             else:
-                stand_ratio = min(1.0, (scene_prog - 0.5) * 3.0)
-                target_positions[2] = DEFAULT_POSE[2] - 0.45 * (1.0 - stand_ratio)
-                target_positions[3] = DEFAULT_POSE[3] + 0.80 * (1.0 - stand_ratio)
-                target_positions[11] = DEFAULT_POSE[11] + 0.45 * (1.0 - stand_ratio)
-                target_positions[12] = DEFAULT_POSE[12] + 0.80 * (1.0 - stand_ratio)
-                target_positions[7] = 0.20 * math.sin(t_sec * 12.0)  # happy head waggle
+                stand = min(1.0, (scene_prog - 0.5) * 2.5)
+                sit = 1.0 - stand
+                target_positions[3] = DEFAULT_POSE[3] + 0.40 * sit
+                target_positions[4] = DEFAULT_POSE[4] + 0.20 * sit
+                target_positions[12] = DEFAULT_POSE[12] - 0.40 * sit
+                target_positions[13] = DEFAULT_POSE[13] - 0.20 * sit
+                target_positions[7] = 0.18 * math.sin(t_sec * 8.0)  # happy head waggle
 
         # Advance BAM M6 transport delay queue once per policy step (50 Hz / 20 ms)
         delayed_targets = bam.step_delay(target_positions)
-
-        # Dynamic push disturbance injection in Scene 2 at t = 14.2s (frame ~426)
-        if scene_idx == 2 and f == int(FPS * 14.2):
-            data.qvel[1] += 0.25  # +0.25 m/s lateral impulse to trunk
 
         # Step physics sub-steps with BAM M6 coupled to MuJoCo solver
         for _ in range(10):
             q_enc = backlash_mgr.read_encoder_positions(data)
             v_enc = backlash_mgr.read_encoder_velocities(data)
             torques = bam.compute_torques(delayed_targets, q_enc, v_enc, advance_delay=False)
-            
+
             # Actuator force coupling: enforce dynamic torque limits on MuJoCo solver
             dynamic_limits = bam.last_torque_limits
             model.actuator_forcerange[:, 0] = -dynamic_limits
@@ -647,8 +674,10 @@ def build_and_render_video() -> None:
         world_g = np.array([0.0, 0.0, -1.0], dtype=np.float32)
         sim_data["proj_g"] = quat_rotate_inverse(quat, world_g)
 
-        # Render 1080P 3D frame
-        renderer.update_scene(data, camera=camera)
+        # Render 1080P 3D frame with visual geomgroup 2 enabled
+        vopt = mujoco.MjvOption()
+        vopt.geomgroup[2] = 1
+        renderer.update_scene(data, camera=camera, scene_option=vopt)
         raw_rgb = renderer.render()
 
         # Render HUD overlay

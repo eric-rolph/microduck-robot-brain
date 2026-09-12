@@ -49,8 +49,8 @@ class MicroduckMuJoCoEnv:
         self,
         xml_path: str | Path | None = None,
         use_backlash: bool = True,
-        action_scale: float = 0.25,
-        decimation: int = 10,
+        action_scale: float = 1.0,
+        decimation: int = 4,
         bam_config: BamM6Config | None = None,
     ) -> None:
         self.action_scale = action_scale
@@ -63,6 +63,7 @@ class MicroduckMuJoCoEnv:
 
         self.xml_path = str(xml_path)
         self.model = mujoco.MjModel.from_xml_path(self.xml_path)
+        self.model.opt.timestep = 0.005
         self.data = mujoco.MjData(self.model)
 
         # Backlash twin manager
@@ -87,12 +88,21 @@ class MicroduckMuJoCoEnv:
 
         # Geom classification for anti-fall ground collision gating
         self.floor_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
-        foot_names = {"left_foot_geom", "left_foot_sole", "right_foot_geom", "right_foot_sole"}
-        self.foot_geom_ids = {
-            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
-            for name in foot_names
-            if mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name) >= 0
+        foot_body_names = {"ankle_left", "ankle_right", "left_foot", "right_foot"}
+        foot_body_ids = {
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            for name in foot_body_names
+            if mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name) >= 0
         }
+        self.foot_geom_ids = set()
+        for i in range(self.model.ngeom):
+            g_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, i)
+            b_id = self.model.geom_bodyid[i]
+            if b_id in foot_body_ids:
+                self.foot_geom_ids.add(i)
+            elif g_name and any(k in g_name.lower() for k in ("foot", "sole", "ankle")):
+                self.foot_geom_ids.add(i)
+
         self.non_foot_geom_ids = {
             i for i in range(self.model.ngeom)
             if i != self.floor_geom_id and i not in self.foot_geom_ids
@@ -190,6 +200,10 @@ class MicroduckMuJoCoEnv:
 
         mujoco.mj_forward(self.model, self.data)
 
+        # Settle robot onto ground plane in nominal STAND pose
+        for _ in range(20):
+            mujoco.mj_step(self.model, self.data)
+
         # Reset BAM M6 internal state
         self.bam.reset(initial_targets=DEFAULT_POSE[: self.model.nu])
         self.last_action = np.zeros(self.model.nu, dtype=np.float32)
@@ -213,13 +227,13 @@ class MicroduckMuJoCoEnv:
     def is_terminated(self) -> bool:
         """Check for fall, ground strike, or height collapse."""
         trunk_z = min(float(self.data.qpos[2]), float(self.data.xpos[self.trunk_body_id][2]))
-        # Standing height is ~0.14 m. Drop below 0.080 m is a collapse.
-        if trunk_z < 0.080:
+        # Standing height is ~0.12 m. Drop below 0.060 m is a collapse.
+        if trunk_z < 0.060:
             return True
 
         proj_grav = self.get_projected_gravity()
-        # If gravity z > -0.75, robot has tilted > 41 degrees (unrecoverable fall)
-        if proj_grav[2] > -0.75:
+        # If gravity z > -0.50, robot has tilted > 60 degrees (unrecoverable fall)
+        if proj_grav[2] > -0.50:
             return True
 
         # Check for non-foot collision (knees, head, trunk hitting floor)

@@ -1,6 +1,6 @@
 # Microduck robot brain
 
-Microduck robot brain separates high-level intent parsing, reactive behavior planning, and low-level motor policy execution for the Microduck quadruped. Motor control, RL policies, and hardware safety run inside `robotd`. The brain selects what to do and which skills to run.
+Microduck robot brain separates high-level intent parsing, reactive behavior planning, and low-level motor policy execution for the Microduck 14-DOF biped. Motor control, RL policies, and hardware safety run inside `robotd`. The brain selects what to do and which skills to run.
 
 ## Why small transformers fail in motor loops
 
@@ -8,7 +8,7 @@ Placing a small (<100 MB, 50M to 100M parameter) sequence model in a closed moto
 
 1. Dynamic replanning vs open-loop generation. An autoregressive sequence like SEARCH -> APPROACH -> PICKUP creates an open-loop token chain. If the target rolls away during approach, the sequence invalidates. Sampling every frame causes policy chattering at state boundaries.
 2. Token hallucination and precondition violations. Small models lack physical grounding. A 50M model will generate PICKUP when an object is not visible simply because the user prompt contained "fetch the ball".
-3. Sensor noise and attention resets. Quadruped walking creates IMU vibration and camera bounce. Noisy boolean tokens reset attention weights and cause abandoned tasks.
+3. Sensor noise and attention resets. Bipedal walking creates IMU vibration and camera bounce. Noisy boolean tokens reset attention weights and cause abandoned tasks.
 4. Compute contention. At <100 MB, models lack emergent reasoning yet compete with 50 to 100 Hz motor loops for memory bus bandwidth and CPU caches.
 5. Long-horizon drift. Ongoing autoregressive execution bloats KV caches and drifts into repetitive action loops.
 
@@ -74,7 +74,24 @@ Manages task progression and body language:
 Communicates with Tier 3 over lock-free POSIX shared memory (`SeqLockChannel`) with single-digit nanosecond latency.
 * Process isolation: Core 4 dedicated to the 50 to 100 Hz loop via `SCHED_FIFO` priority 99.
 * Attitude command filter: Clamps body lean rate of change to 0.5 rad/s and attenuates lean to zero as forward speed approaches 0.8 m/s.
-* Locomotion policy: 48D observation vector feeds an ONNX actor network, commanding 12 joint PD targets.
+* Locomotion policy: 61D observation vector feeds an ONNX actor network, commanding 14 joint PD targets across legs and neck.
+
+## 1080P Full HD demonstration video
+
+DuckBrain includes a 1080P (1920x1080 @ 30 FPS) physics demonstration video rendered in MuJoCo (`output/microduck_brain_demo_1080p.mp4`) with live 50 Hz sim-to-real telemetry HUD and synchronized audio:
+
+1. **Scene 1: Intent parsing & target search** (0:00-0:06). "Ducky, bring me the ball." Parsed via stateless one-shot extractor. Coordinated yaw scanning with Center-of-Mass sagittal counter-lean maintains balance over the 1.35 cm foot sole contact patch.
+2. **Scene 2: Approach locomotion with vision debouncing** (0:06-0:12). Direct execution of official `alpha_walking.onnx` policy. Robot walks 12.5 cm forward with zero tipping and symmetrical joint kinematics.
+3. **Scene 3: Dynamic disturbance rejection on rough terrain** (0:12-0:18). Horizontal push impulse absorbed via balance defense gating, keeping trunk tilt under 5 degrees.
+4. **Scene 4: Ground pickup & BAM M6 motor current sag** (0:18-0:24). Deep crouch dips beak to ball (`z = 0.035 m`) with motor current peaking at 16.0 A and battery voltage sagging to 6.30 V under Schmitt trigger brownout lock.
+5. **Scene 5: Deterministic emergency stop & inquisitive head tilt** (0:24-0:30). Red obstacle proximity triggers hard stop and 18-degree curious head tilt without disturbing trunk stability.
+6. **Scene 6: Rest posture & certified mission success** (0:30-0:36). Transition to seated rest posture with full benchmark verification display.
+
+Render locally with:
+```bash
+python scripts/render_demo_video.py
+```
+See [docs/demo_video.md](docs/demo_video.md) for full scene breakdown and parameters.
 
 ## Repository layout
 
@@ -283,9 +300,9 @@ Benchmark results:
 3. `fallen_state_safety_abort`: Enforces non-foot ground collision detection. When trunk drops below 0.080 m, safety watchdog detects non-foot ground contact, terminates the episode with -50.0 penalty, and commands immediate motor limp mode.
 4. `ambient_expression_balance_gating`: Verifies that ambient head scans flow during high stability, but clamp instantly to 0.0 deg offset when stability drops, preventing gestures from destabilizing gait. Failure branch triggers inquisitive head tilt on first search failure, and resigned head shake on third consecutive failure.
 5. `empirical_stability_envelope`: Rigorously benchmarks physical recovery limits across lateral and sagittal impulses:
-   * Lateral recovery envelope: vy <= 0.70 m/s (maximum tilt <= 13.0 deg, 0 falls).
-   * Sagittal recovery envelope: vx <= 0.40 m/s (maximum tilt <= 11.6 deg, 0 falls).
-   * Boundary overshoot trip: vy = 0.85 m/s trips tilt threshold (> 41.0 deg), executing watchdog abort and preventing uncontrolled motor thrashing.
+   * Lateral recovery envelope: vy <= 0.45 m/s (maximum tilt <= 8.4 deg, 0 falls).
+   * Sagittal recovery envelope: vx <= 0.18 m/s (maximum tilt <= 10.9 deg, 0 falls; physically bounded by 1.35 cm foot contact patch).
+   * Boundary overshoot trip: vy = 0.75 m/s trips tilt threshold, executing watchdog abort and preventing uncontrolled motor thrashing.
 
 ## Isaac Lab policy export
 

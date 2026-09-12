@@ -115,7 +115,7 @@ class MicroduckLocomotionEngine:
         # Nominal standing joint angles (14-DOF biped)
         self.default_dof_pos = DEFAULT_POSE.copy()
 
-        self.action_scale = 0.25
+        self.action_scale = 1.0
         self.num_dofs = 14
         self.obs_dim = 61
         self.last_action = np.zeros(self.num_dofs, dtype=np.float32)
@@ -132,6 +132,13 @@ class MicroduckLocomotionEngine:
 
             self.session = ort.InferenceSession(onnx_model_path, opts, providers=["CPUExecutionProvider"])
             self.input_name = self.session.get_inputs()[0].name
+
+            try:
+                meta = self.session.get_modelmeta()
+                if hasattr(meta, "custom_metadata_map") and "action_scale" in meta.custom_metadata_map:
+                    self.action_scale = float(meta.custom_metadata_map["action_scale"])
+            except Exception:
+                pass
 
     def step(
         self,

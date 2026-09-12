@@ -1,7 +1,7 @@
 # Video and local scratch files
 *.mp4
 *.wav
-assets/
+/assets/
 output/
 src/render_video.py
 src/audio_synth.py
@@ -20,6 +20,8 @@ htmlcov/
 venv/
 *.pt
 *.onnx
+!models/*.onnx
+!microduck_brain/sim/mjcf/assets/**
 
 # C++ / CMake
 bin/
