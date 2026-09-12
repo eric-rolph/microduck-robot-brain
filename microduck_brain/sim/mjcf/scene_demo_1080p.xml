@@ -1,9 +1,9 @@
 <mujoco model="microduck_demo_1080p">
-  <include file="robot_walk_backlash.xml"/>
+  <include file="robot_demo_beak.xml"/>
 
   <visual>
     <global offwidth="1920" offheight="1080" azimuth="160" elevation="-20"/>
-    <headlight diffuse="0.8 0.8 0.8" ambient="0.4 0.4 0.4" specular="0.25 0.25 0.25"/>
+    <headlight diffuse="0.85 0.85 0.85" ambient="0.4 0.4 0.4" specular="0.25 0.25 0.25"/>
     <rgba haze="0.15 0.25 0.35 1"/>
     <quality shadowsize="2048"/>
   </visual>
@@ -18,11 +18,22 @@
     <light pos="0 0 3.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane"/>
 
-    <!-- Target object for fetch & beak pickup with feeder pedestal -->
-    <geom name="pedestal_geom" type="cylinder" size="0.03 0.05" pos="0.18 0.02 0.05" rgba="0.25 0.35 0.45 1"/>
-    <body name="target_snack" pos="0.18 0.02 0.115">
-      <freejoint name="snack_free"/>
-      <geom name="snack_geom" type="cylinder" size="0.016 0.015" rgba="1.0 0.82 0.05 1" mass="0.020" friction="1.5 0.005 0.0001"/>
+    <!-- Desktop pen cradle / stand for the dry-erase marker -->
+    <body name="cradle" pos="0.16 0.02 0.105">
+      <geom name="cradle_base" type="box" size="0.035 0.055 0.105" rgba="0.22 0.28 0.35 1"/>
+    </body>
+
+    <!-- Dry-erase marker resting horizontally across the pen cradle -->
+    <body name="marker" pos="0.16 0.02 0.218">
+      <freejoint name="marker_free"/>
+      <!-- Main white barrel (14mm diameter, 7.6cm length) -->
+      <geom name="marker_barrel" type="cylinder" size="0.007 0.038" pos="0 -0.01 0" quat="0.707107 0.707107 0 0" rgba="0.95 0.95 0.95 1" mass="0.012"/>
+      <!-- Bold blue marker cap -->
+      <geom name="marker_cap" type="cylinder" size="0.0078 0.018" pos="0 0.045 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.004"/>
+      <!-- Blue branding stripe on barrel -->
+      <geom name="marker_stripe" type="cylinder" size="0.0072 0.010" pos="0 0.01 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.001"/>
+      <!-- Rear end plug -->
+      <geom name="marker_plug" type="cylinder" size="0.0068 0.005" pos="0 -0.052 0" quat="0.707107 0.707107 0 0" rgba="0.3 0.3 0.3 1" mass="0.001"/>
     </body>
 
     <!-- Rough terrain section: low-profile obstacles -->
@@ -31,40 +42,46 @@
     <geom name="bump3" type="capsule" fromto="0.95 -0.35 0.007 0.95 0.35 0.007" size="0.010" rgba="0.35 0.42 0.5 1" friction="1.5 0.005 0.0001"/>
 
     <!-- Navigation obstacle box requiring autonomous flank circumnavigation -->
-    <body name="obstacle_box" pos="0.10 -0.12 0.04">
+    <body name="obstacle_box" pos="0.08 -0.12 0.04">
       <geom name="obstacle_geom" type="box" size="0.03 0.04 0.04" rgba="0.9 0.22 0.2 0.95" mass="1.5"/>
     </body>
   </worldbody>
 
   <contact>
-    <exclude body1="target_snack" body2="ankle_left"/>
-    <exclude body1="target_snack" body2="ankle_right"/>
-    <exclude body1="target_snack" body2="leg"/>
-    <exclude body1="target_snack" body2="leg_2"/>
-    <exclude body1="target_snack" body2="upper_leg_left"/>
-    <exclude body1="target_snack" body2="upper_leg_right"/>
+    <exclude body1="cradle" body2="ankle_left"/>
+    <exclude body1="cradle" body2="ankle_right"/>
+    <exclude body1="cradle" body2="leg"/>
+    <exclude body1="cradle" body2="leg_2"/>
+    <exclude body1="cradle" body2="upper_leg_left"/>
+    <exclude body1="cradle" body2="upper_leg_right"/>
+    <exclude body1="marker" body2="ankle_left"/>
+    <exclude body1="marker" body2="ankle_right"/>
+    <exclude body1="marker" body2="leg"/>
+    <exclude body1="marker" body2="leg_2"/>
+    <exclude body1="marker" body2="upper_leg_left"/>
+    <exclude body1="marker" body2="upper_leg_right"/>
     <exclude body1="obstacle_box" body2="ankle_left"/>
     <exclude body1="obstacle_box" body2="ankle_right"/>
   </contact>
 
   <equality>
-    <weld name="beak_grasp" body1="jaw_soft" body2="target_snack" active="false"/>
+    <weld name="beak_grasp" body1="beak_jaw" body2="marker" active="false"/>
   </equality>
 
   <keyframe>
     <key name="INIT" qpos="
       0 0 0.12 1 0 0 0
       0 0 0 0 0 0 0 0 0 0
-      0 0 0 0 0 0 0 0
+      0 0 0 0 0 0 0 0 0
       0 0 0 0 0 0 0 0 0 0
-      0.18 0.02 0.115 1 0 0 0"
+      0.16 0.02 0.218 1 0 0 0"
       ctrl="0 0 0 0 0 0 0 0 0 0 0 0 0 0"/>
     <key name="STAND" qpos="
       0 0 0.12 1 0 0 0
       0 0 -0.08726646259971647 0 -0.457924 0 -0.004940 0 0.452984 0
-      0.3490658503988659 0 0.3490658503988659 0 0 0 0 0
+      0.3490658503988659 0 0.3490658503988659 0 0 0 0 0 0
       0 0 0.08726646259971647 0 0.457924 0 0.004940 0 -0.452984 0
-      0.18 0.02 0.115 1 0 0 0"
+      0.16 0.02 0.218 1 0 0 0"
       ctrl="
       0 -0.08726646259971647 -0.457924 -0.004940 0.452984
       0.3490658503988659 0.3490658503988659 0 0
@@ -72,32 +89,12 @@
     <key name="STAND2" qpos="
       0 0 0.12 1 0 0 0
       0 0 -0.08726646259971647 0 -0.457924 0 -0.004940 0 0.452984 0
-      0.3490658503988659 0 0.3490658503988659 0 0 0 0 0
+      0.3490658503988659 0 0.3490658503988659 0 0 0 0 0 0
       0 0 0.08726646259971647 0 0.457924 0 0.004940 0 -0.452984 0
-      0.18 0.02 0.115 1 0 0 0"
+      0.16 0.02 0.218 1 0 0 0"
       ctrl="
       0 -0.08726646259971647 -0.457924 -0.004940 0.452984
       0.3490658503988659 0.3490658503988659 0 0
       0 0.08726646259971647 0.457924 0.004940 -0.452984"/>
-    <key name="SIT" qpos="
-      0 0 0.07 1 0 0 0
-      0 0 0 0 -0.5236 0 1.0472 0 0 0
-      0.5 0 1.6 0 0 0 0 0
-      0 0 0 0 0.5236 0 -1.0472 0 0 0
-      0.18 0.02 0.115 1 0 0 0"
-      ctrl="
-      0 0 -0.5236 1.0472 0
-      0.5 1.6 0 0 0
-      0 0.5236 -1.0472 0"/>
-    <key name="FOLD" qpos="
-      0 0 0.07 1 0 0 0
-      0 0 0 0 1.57 0 1.57 0 0 0
-      1 0 1 0 0 0 0 0
-      0 0 0 0 -1.57 0 -1.57 0 0 0
-      0.18 0.02 0.115 1 0 0 0"
-      ctrl="
-      0 0 1.57 1.57 0
-      1 1 0 0
-      0 0 -1.57 -1.57 0"/>
   </keyframe>
 </mujoco>

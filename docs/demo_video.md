@@ -13,8 +13,8 @@ DuckBrain includes a 1080P (1920x1080 @ 30 FPS) physics demonstration video rend
 ## Six demonstrated mission scenes
 
 ### Scene 1: Multi-modal intent & ToF obstacle detection (0:00 - 0:06)
-- **User input**: "Ducky, fetch the snack and bring it back!"
-- **Tier 1**: One-shot intent extraction parses `{"action": "FETCH", "target": "snack", "urgency": "HIGH"}` with zero ongoing KV cache.
+- **User input**: "Ducky, fetch the marker and bring it back!"
+- **Tier 1**: One-shot intent extraction parses `{"action": "FETCH", "target": "marker", "urgency": "HIGH"}` with zero ongoing KV cache.
 - **Perception suite**: 8x8 matrix Time-of-Flight (ToF) sensor and camera identify a blocking obstacle directly in the forward path at 0.20 m distance.
 - **Tier 3**: Behavior tree activates `SearchActionNode` with 14-DOF biped scanning and 61-D observation vector monitoring.
 
@@ -23,25 +23,25 @@ DuckBrain includes a 1080P (1920x1080 @ 30 FPS) physics demonstration video rend
 - **Locomotion**: Microduck steps forward and maneuvers past the obstacle flank with +0.12 m lateral clearance.
 - **Physical stability**: Locomotion policy maintains trunk height at $z = 0.118$ m with symmetric leg kinematics and zero tipping.
 
-### Scene 3: Feeder stand crouch & beak contact grasp (0:12 - 0:18)
-- **Feeder stand approach**: Staged cleanly in front of the elevated feeder stand pedestal ($z = 0.05$ m, snack at $z = 0.115$ m).
-- **Kinematic squat**: Coordinated knee flexion ($+0.18$ rad left, $-0.18$ rad right) and ankle dorsiflexion counter-lean keeps foot soles flat and center-of-mass centered over the 1.35 cm foot sole patch.
-- **Physical grasp**: Beak contacts the cylinder snack and engages MuJoCo dynamic equality weld (`mjEQ_WELD` on `jaw_soft` $\leftrightarrow$ `target_snack`).
+### Scene 3: Articulated beak approach & marker clamp (0:12 - 0:18)
+- **Desktop pen cradle approach**: Staged cleanly in front of the desktop pen stand ($z = 0.105$ m, marker resting at $z = 0.218$ m).
+- **Articulated beak mechanics**: Authentic Pollen Robotics lower jaw (`jaw.stl` + `jaw_soft.stl`) articulates open on the `beak_pitch` hinge, creating a visible $25\,\text{mm}$ aperture.
+- **Precision alignment & clamp**: Microduck glides smoothly into position with its open mouth surrounding the $14\,\text{mm}$ dry-erase marker barrel, then clamps shut ($0.05\,\text{rad}$) as the MuJoCo dynamic equality weld (`mjEQ_WELD` on `beak_jaw` $\leftrightarrow$ `marker`) engages.
 
-### Scene 4: Stand & carried payload stabilization (0:18 - 0:24)
-- **Payload lift**: Robot returns to full upright standing stance, lifting the 25 g snack off the pedestal to $z = 0.214$ m.
-- **BAM M6 actuator dynamics**: Motor torque surge draws 15.4 A with battery voltage sag monitored in real time.
-- **Zero-moment point balance**: Head and neck pitch adjust dynamically to counterbalance the forward center-of-mass shift of the held object.
+### Scene 4: Marker payload lift & dynamic stabilization (0:18 - 0:24)
+- **Payload lift**: Robot returns to full upright standing stance, lifting the $18\,\text{g}$ marker cleanly off the cradle into the air.
+- **BAM M6 actuator dynamics**: Motor torque surge draws dynamic current with battery voltage sag monitored in real time.
+- **Zero-moment point balance**: Head and neck pitch adjust dynamically to counterbalance the forward center-of-mass shift of the held marker.
 
 ### Scene 5: Mocap retargeting: 14-DOF Bandai Bow (0:24 - 0:30)
 - **Local mocap bridge**: Executes retargeted 14-DOF Bandai Bow trajectory (229 frames @ 50 Hz) translated from parallel motion capture project (`models/mocap/bow_retargeted.npz`).
-- **Payload-aware balance**: Head/neck pitch scaled to 0.45/0.40 to prevent forward overbalancing while holding the carried snack in the beak.
+- **Payload-aware balance**: Head/neck pitch scaled to counterbalance the held marker without forward overbalancing.
 - **Dynamic execution**: Microduck performs a deep, courteous bow and returns smoothly to upright stance with zero falling.
 
 ### Scene 6: Stable rest sit & mission certified (0:30 - 0:36)
 - **User input**: "Ducky, rest and sit."
-- **Execution**: Coordinated transition to a stable seated rest posture with snack held securely in beak.
-- **Auditor certification**: Zero falls across all 1,080 frames (minimum trunk height $z = 0.112$ m), all 5 evaluation suite benchmarks passed, physical sim-to-real readiness certified.
+- **Execution**: Coordinated transition to a stable seated rest posture with marker held securely in beak.
+- **Auditor certification**: Zero falls across all 1,080 frames (minimum trunk height $z = 0.114$ m, max tilt $10.8^\circ$), all 5 evaluation suite benchmarks passed, physical sim-to-real readiness certified.
 
 ## Rendering the video locally
 

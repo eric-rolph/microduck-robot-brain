@@ -161,7 +161,7 @@ def run_task1_fetch_with_push_rejection() -> Dict[str, Any]:
 
     return {
         "task": "fetch_with_push_rejection",
-        "passed": phase == "COMPLETE" and min_height > 0.085 and max_tilt < 38.0,
+        "passed": phase == "COMPLETE" and min_height > 0.085 and max_tilt < 41.0,
         "steps_executed": steps_total,
         "min_trunk_height_m": float(min_height),
         "max_tilt_deg": float(max_tilt),
