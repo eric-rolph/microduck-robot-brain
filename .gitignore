@@ -1,0 +1,46 @@
+# Video and local scratch files
+*.mp4
+*.wav
+assets/
+output/
+src/render_video.py
+src/audio_synth.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+*.pt
+*.onnx
+
+# C++ / CMake
+bin/
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Logs and profiling data
+latency_hist.txt
+latency_plot.png
+*.log
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

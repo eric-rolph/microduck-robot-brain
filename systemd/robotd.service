@@ -1,0 +1,37 @@
+[Unit]
+Description=Microduck Real-Time Motor Control Daemon (robotd)
+Slice=realtime.slice
+DefaultDependencies=no
+After=local-fs.target systemd-sysctl.service
+Before=multi-user.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/robotd
+Restart=always
+RestartSec=500ms
+KillMode=process
+
+# Real-time scheduling configuration
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=99
+CPUSchedulingResetOnFork=true
+
+# CPU pinning: Core 4 dedicated to 50-100 Hz motor control loop
+CPUAffinity=4
+
+# Memory locking: removes limits so mlockall() succeeds and prevents page fault jitter
+LimitMEMLOCK=infinity
+LimitRTPRIO=99
+
+# Linux capabilities for RT scheduling and IPC memory locking without full root
+AmbientCapabilities=CAP_SYS_NICE CAP_IPC_LOCK
+CapabilityBoundingSet=CAP_SYS_NICE CAP_IPC_LOCK
+
+TasksMax=16
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

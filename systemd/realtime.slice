@@ -1,0 +1,15 @@
+[Unit]
+Description=Real-Time Quadruped Control Slice
+DefaultDependencies=no
+Before=slices.target
+
+[Slice]
+# Hard assign this cgroup exclusively to Core 4
+AllowedCPUs=4
+
+# Memory protection: prevent cgroup OOM thrashing
+MemoryHigh=512M
+MemoryMax=1G
+
+# Prioritize cgroup scheduling weight
+CPUWeight=10000
