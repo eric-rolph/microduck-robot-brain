@@ -1,0 +1,25 @@
+[Unit]
+Description=Microduck Executive Robot Brain (DuckBrain)
+After=robotd.service network.target
+Wants=robotd.service
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+User=duck
+WorkingDirectory=/home/duck/microduck-robot-brain
+ExecStart=/home/duck/microduck-robot-brain/.venv/bin/python3 scripts/run_physical_microduck.py --socket /run/robotd.sock --tof-socket /run/tofd/tof.sock
+Restart=on-failure
+RestartSec=1s
+KillSignal=SIGTERM
+TimeoutStopSec=3s
+
+# CPU affinity: Run brain on cores 2-3, leaving core 4 isolated for robotd RT motor loop
+CPUAffinity=2,3
+Nice=-5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

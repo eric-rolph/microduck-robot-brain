@@ -267,6 +267,48 @@ Export trained checkpoints to standalone ONNX:
 python isaac_lab/export_onnx.py --checkpoint logs/model.pt --output microduck_locomotion.onnx
 ```
 
+## Physical Microduck robot deployment
+
+DuckBrain connects directly to Pollen Robotics physical Microduck biped robot over Unix domain sockets (`/run/robotd.sock`, `/run/tofd/tof.sock`) or across a TCP network tunnel.
+
+### Pre-flight hardware checks
+
+Before running untethered, run the pre-flight verification script to test daemon connectivity, battery voltage (> 6.5V brownout limit), safety state, and sensor feeds:
+
+```bash
+# On physical robot (or over SSH tunnel):
+python scripts/check_physical_duck.py
+
+# Offline verification / CI dry-run:
+python scripts/check_physical_duck.py --dry-run
+```
+
+### Interactive brain execution
+
+Launch the 20 Hz executive brain with an interactive natural-language console:
+
+```bash
+# Onboard CM4:
+python scripts/run_physical_microduck.py --interactive
+
+# Remote workstation over Wi-Fi (SSH forwarded sockets):
+ssh -N -L 8088:/run/robotd.sock -L 8089:/run/tofd/tof.sock duck@microduck.local &
+python scripts/run_physical_microduck.py --endpoint localhost:8088 --tof-endpoint localhost:8089 --interactive
+```
+
+Type commands at the prompt:
+```text
+ducky> come
+ducky> fetch ball
+ducky> sit
+ducky> quack
+ducky> status
+ducky> stop
+```
+
+For full systemd setup, brownout thresholds, and real-time core isolation details, see [docs/physical_robot_setup.md](docs/physical_robot_setup.md).
+
 ## License
 
 Apache-2.0
+

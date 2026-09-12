@@ -116,6 +116,7 @@ class WorldState:
         self.roughness_trigger = MultiLevelSchmittTrigger(
             low_to_med=0.35, med_to_low=0.25, med_to_high=0.65, high_to_med=0.50, initial_state="LOW"
         )
+        self.battery_trigger = SchmittTrigger(low_threshold=6.5, high_threshold=6.8, initial_state="HIGH")
         self.ball_debouncer = TemporalDebouncer(window_size=5, required_ratio=0.8)
         self.obstacle_debouncer = TemporalDebouncer(window_size=5, required_ratio=0.8)
 
@@ -123,6 +124,12 @@ class WorldState:
         self.roughness: StateLevel = "LOW"
         self.ball_visible: bool = False
         self.obstacle_close: bool = False
+        self.battery_volts: float = 7.4
+        self.battery_percent: float = 100.0
+        self.is_brownout_risk: bool = False
+        self.is_fallen: bool = False
+        self.is_limp: bool = False
+        self.forward_clearance_m: float = 2.0
 
     def update_orientation(self, roll: float, pitch: float) -> StateLevel:
         """Update stability from roll/pitch deviation."""
@@ -147,6 +154,61 @@ class WorldState:
         self.obstacle_close = self.obstacle_debouncer.update(raw_detected)
         return self.obstacle_close
 
+    def update_battery_voltage(self, volts: float, percent: Optional[float] = None) -> bool:
+        """Updates battery level and evaluates brownout lockout trigger."""
+        self.battery_volts = float(volts)
+        if percent is not None:
+            self.battery_percent = float(percent)
+        # Trigger is LOW when voltage <= 6.5V (brownout risk)
+        state = self.battery_trigger.update(self.battery_volts)
+        self.is_brownout_risk = (state == "LOW")
+        return self.is_brownout_risk
+
+    def update_from_robot_state(self, state: dict[str, Any]) -> None:
+        """Incorporate telemetry frame from Pollen robotd daemon."""
+        safety = state.get("safety", {})
+        self.is_fallen = bool(safety.get("fallen", False))
+        self.is_limp = bool(safety.get("limp", False))
+
+        gravity = safety.get("gravity")
+        if isinstance(gravity, (list, tuple)) and len(gravity) == 3:
+            gx, gy, gz = float(gravity[0]), float(gravity[1]), float(gravity[2])
+            # Trunk frame: upright has gravity pointing down [0, 0, -1]
+            roll = math.atan2(gy, -gz) if abs(gz) > 1e-4 or abs(gy) > 1e-4 else 0.0
+            norm_yz = math.sqrt(gy**2 + gz**2)
+            pitch = math.atan2(-gx, norm_yz) if norm_yz > 1e-4 or abs(gx) > 1e-4 else 0.0
+            self.update_orientation(roll, pitch)
+
+        battery = state.get("battery")
+        if isinstance(battery, dict) and "volts" in battery:
+            self.update_battery_voltage(battery["volts"], battery.get("percent"))
+        elif "battery_volts" in state:
+            self.update_battery_voltage(float(state["battery_volts"]))
+
+    def update_from_tof_frame(self, tof: dict[str, Any]) -> float:
+        """Incorporate 8x8 matrix distance frame from Pollen tofd daemon."""
+        distance_mm = tof.get("distance_mm", [])
+        rows = int(tof.get("rows", 8))
+        cols = int(tof.get("cols", 8))
+
+        if len(distance_mm) == rows * cols and rows >= 4 and cols >= 4:
+            # Extract central 4x4 matrix for forward obstacle gating
+            valid_depths_m: list[float] = []
+            for r in range(rows // 4, (3 * rows) // 4):
+                for c in range(cols // 4, (3 * cols) // 4):
+                    idx = r * cols + c
+                    d = distance_mm[idx]
+                    if d > 10:  # Ignore 0 or invalid negative distance readings
+                        valid_depths_m.append(d / 1000.0)
+
+            if valid_depths_m:
+                min_center_dist = min(valid_depths_m)
+                self.forward_clearance_m = min_center_dist
+                self.update_obstacle_close(min_center_dist < 0.30)
+                return min_center_dist
+
+        return self.forward_clearance_m
+
     def to_dict(self) -> dict[str, Any]:
         """Export sanitized predicate dictionary for Behavior Tree ticks."""
         return {
@@ -154,4 +216,10 @@ class WorldState:
             "roughness": self.roughness,
             "ball_visible": self.ball_visible,
             "obstacle_close": self.obstacle_close,
+            "battery_volts": self.battery_volts,
+            "battery_percent": self.battery_percent,
+            "is_brownout_risk": self.is_brownout_risk,
+            "is_fallen": self.is_fallen,
+            "is_limp": self.is_limp,
+            "forward_clearance_m": self.forward_clearance_m,
         }

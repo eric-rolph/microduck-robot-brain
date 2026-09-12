@@ -113,3 +113,21 @@ def parse_voice_command_stateless(
         return ParsedIntent.from_dict(data)
     except (json.JSONDecodeError, ValueError):
         return parse_intent_fallback(raw_audio_text)
+
+
+class IntentParser:
+    """Convenience wrapper for extracting structured intents."""
+
+    def __init__(self, model: Any = None, tokenizer: Any = None) -> None:
+        self.model = model
+        self.tokenizer = tokenizer
+
+    def parse(self, text: str) -> dict[str, Any]:
+        """Extracts intent and returns a dictionary with intent, target, and urgency."""
+        parsed = parse_voice_command_stateless(self.model, self.tokenizer, text)
+        return {
+            "intent": parsed.action,
+            "target": parsed.target,
+            "urgency": parsed.urgency,
+        }
+
