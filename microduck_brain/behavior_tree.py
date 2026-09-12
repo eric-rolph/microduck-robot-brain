@@ -291,3 +291,181 @@ class FailureExpressionBranch(BehaviorNode):
     def abort(self) -> None:
         self.tilt_expression.abort()
         self.shake_expression.abort()
+
+
+class ObstacleAvoidanceNode(BehaviorNode):
+    """
+    Reactive navigation node for dynamic obstacle circumnavigation.
+    When ToF distance sensor detects a frontal obstacle, commands yaw
+    deflection, forward bypass, and re-alignment to clear the obstacle.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        blackboard: Optional[Blackboard] = None,
+        turn_ticks: int = 15,
+        bypass_ticks: int = 25,
+        realign_ticks: int = 15,
+        velocity_callback: Optional[Callable[[float, float, float], None]] = None,
+    ) -> None:
+        super().__init__(name, blackboard)
+        self.turn_ticks = turn_ticks
+        self.bypass_ticks = bypass_ticks
+        self.realign_ticks = realign_ticks
+        self.velocity_callback = velocity_callback
+        self.phase = 0  # 0: idle/check, 1: turn_away, 2: bypass, 3: realign
+        self.step_in_phase = 0
+
+    def tick(self, world_state: Mapping[str, Any]) -> SkillStatus:
+        obstacle = bool(world_state.get("obstacle_detected", False))
+
+        if self.phase == 0:
+            if not obstacle:
+                return SkillStatus.SUCCESS
+            # Start avoidance maneuver
+            self.phase = 1
+            self.step_in_phase = 0
+
+        if self.phase == 1:
+            # Turn left to clear frontal line
+            if self.velocity_callback is not None:
+                self.velocity_callback(0.02, 0.0, 0.45)
+            self.step_in_phase += 1
+            if self.step_in_phase >= self.turn_ticks:
+                self.phase = 2
+                self.step_in_phase = 0
+            return SkillStatus.RUNNING
+
+        elif self.phase == 2:
+            # Advance along flank past obstacle
+            if self.velocity_callback is not None:
+                self.velocity_callback(0.08, 0.02, 0.0)
+            self.step_in_phase += 1
+            if self.step_in_phase >= self.bypass_ticks:
+                self.phase = 3
+                self.step_in_phase = 0
+            return SkillStatus.RUNNING
+
+        elif self.phase == 3:
+            # Steer right to re-align heading with target
+            if self.velocity_callback is not None:
+                self.velocity_callback(0.03, 0.0, -0.45)
+            self.step_in_phase += 1
+            if self.step_in_phase >= self.realign_ticks:
+                self.phase = 0
+                self.step_in_phase = 0
+                if self.velocity_callback is not None:
+                    self.velocity_callback(0.0, 0.0, 0.0)
+                return SkillStatus.SUCCESS
+            return SkillStatus.RUNNING
+
+        return SkillStatus.RUNNING
+
+    def abort(self) -> None:
+        self.phase = 0
+        self.step_in_phase = 0
+        if self.velocity_callback is not None:
+            self.velocity_callback(0.0, 0.0, 0.0)
+
+
+class BeakGraspActionNode(BehaviorNode):
+    """
+    Physical object grasping node with Microduck beak.
+    Coordinates deep crouch, beak motor opening, contact lock, and standing recovery.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        blackboard: Optional[Blackboard] = None,
+        crouch_ticks: int = 15,
+        grasp_ticks: int = 10,
+        rise_ticks: int = 15,
+        beak_callback: Optional[Callable[[bool, bool], None]] = None,
+    ) -> None:
+        super().__init__(name, blackboard)
+        self.crouch_ticks = crouch_ticks
+        self.grasp_ticks = grasp_ticks
+        self.rise_ticks = rise_ticks
+        self.beak_callback = beak_callback
+        self.phase = 0  # 0: crouch/open, 1: clamp/weld, 2: rise
+        self.step_in_phase = 0
+
+    def tick(self, world_state: Mapping[str, Any]) -> SkillStatus:
+        if self.phase == 0:
+            # Crouching and opening beak
+            if self.beak_callback is not None:
+                self.beak_callback(True, False)  # beak_open=True, grasp_weld=False
+            self.step_in_phase += 1
+            if self.step_in_phase >= self.crouch_ticks:
+                self.phase = 1
+                self.step_in_phase = 0
+            return SkillStatus.RUNNING
+
+        elif self.phase == 1:
+            # Clamping beak and locking physical equality weld
+            if self.beak_callback is not None:
+                self.beak_callback(False, True)  # beak_open=False, grasp_weld=True
+            self.step_in_phase += 1
+            if self.step_in_phase >= self.grasp_ticks:
+                self.phase = 2
+                self.step_in_phase = 0
+            return SkillStatus.RUNNING
+
+        elif self.phase == 2:
+            # Standing back up with object clamped
+            self.step_in_phase += 1
+            if self.step_in_phase >= self.rise_ticks:
+                self.phase = 0
+                self.step_in_phase = 0
+                return SkillStatus.SUCCESS
+            return SkillStatus.RUNNING
+
+        return SkillStatus.RUNNING
+
+    def abort(self) -> None:
+        self.phase = 0
+        self.step_in_phase = 0
+
+
+class MocapMotionActionNode(BehaviorNode):
+    """
+    Executes a retargeted human motion capture clip (e.g. Bandai Bow)
+    streamed through the MocapPlayer at 50 Hz with stability-first projection.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        mocap_player: Any,
+        blackboard: Optional[Blackboard] = None,
+        joint_callback: Optional[Callable[[np.ndarray], None]] = None,
+    ) -> None:
+        super().__init__(name, blackboard)
+        self.player = mocap_player
+        self.joint_callback = joint_callback
+        self.started = False
+
+    def tick(self, world_state: Mapping[str, Any]) -> SkillStatus:
+        stability = str(world_state.get("stability", "HIGH")).upper()
+        if stability == "LOW":
+            # Suppress mocap motion if balance is compromised
+            return SkillStatus.RUNNING
+
+        if not self.started:
+            self.player.start()
+            self.started = True
+
+        done, joint_targets = self.player.step()
+        if self.joint_callback is not None:
+            self.joint_callback(joint_targets)
+
+        if done:
+            self.started = False
+            return SkillStatus.SUCCESS
+
+        return SkillStatus.RUNNING
+
+    def abort(self) -> None:
+        self.started = False

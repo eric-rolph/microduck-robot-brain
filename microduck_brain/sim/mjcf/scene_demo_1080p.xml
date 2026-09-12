@@ -18,10 +18,11 @@
     <light pos="0 0 3.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane"/>
 
-    <!-- Target object for fetch & ground pick -->
-    <body name="target_ball" pos="0.18 0.0 0.035">
-      <freejoint name="ball_free"/>
-      <geom name="ball_geom" type="sphere" size="0.032" rgba="1.0 0.82 0.05 1" mass="0.02" friction="1.5 0.005 0.0001"/>
+    <!-- Target object for fetch & beak pickup with feeder pedestal -->
+    <geom name="pedestal_geom" type="cylinder" size="0.03 0.05" pos="0.18 0.02 0.05" rgba="0.25 0.35 0.45 1"/>
+    <body name="target_snack" pos="0.18 0.02 0.115">
+      <freejoint name="snack_free"/>
+      <geom name="snack_geom" type="cylinder" size="0.016 0.015" rgba="1.0 0.82 0.05 1" mass="0.020" friction="1.5 0.005 0.0001"/>
     </body>
 
     <!-- Rough terrain section: low-profile obstacles -->
@@ -29,11 +30,26 @@
     <geom name="bump2" type="capsule" fromto="0.75 -0.35 0.009 0.75 0.35 0.009" size="0.012" rgba="0.35 0.42 0.5 1" friction="1.5 0.005 0.0001"/>
     <geom name="bump3" type="capsule" fromto="0.95 -0.35 0.007 0.95 0.35 0.007" size="0.010" rgba="0.35 0.42 0.5 1" friction="1.5 0.005 0.0001"/>
 
-    <!-- Emergency stop obstacle -->
-    <body name="obstacle_box" pos="0.30 0 0.06">
-      <geom name="obstacle_geom" type="box" size="0.03 0.14 0.06" rgba="0.9 0.25 0.2 0.9" mass="1.0"/>
+    <!-- Navigation obstacle box requiring autonomous flank circumnavigation -->
+    <body name="obstacle_box" pos="0.10 -0.12 0.04">
+      <geom name="obstacle_geom" type="box" size="0.03 0.04 0.04" rgba="0.9 0.22 0.2 0.95" mass="1.5"/>
     </body>
   </worldbody>
+
+  <contact>
+    <exclude body1="target_snack" body2="ankle_left"/>
+    <exclude body1="target_snack" body2="ankle_right"/>
+    <exclude body1="target_snack" body2="leg"/>
+    <exclude body1="target_snack" body2="leg_2"/>
+    <exclude body1="target_snack" body2="upper_leg_left"/>
+    <exclude body1="target_snack" body2="upper_leg_right"/>
+    <exclude body1="obstacle_box" body2="ankle_left"/>
+    <exclude body1="obstacle_box" body2="ankle_right"/>
+  </contact>
+
+  <equality>
+    <weld name="beak_grasp" body1="jaw_soft" body2="target_snack" active="false"/>
+  </equality>
 
   <keyframe>
     <key name="INIT" qpos="
@@ -41,14 +57,14 @@
       0 0 0 0 0 0 0 0 0 0
       0 0 0 0 0 0 0 0
       0 0 0 0 0 0 0 0 0 0
-      0.18 0 0.035 1 0 0 0"
+      0.18 0.02 0.115 1 0 0 0"
       ctrl="0 0 0 0 0 0 0 0 0 0 0 0 0 0"/>
     <key name="STAND" qpos="
       0 0 0.12 1 0 0 0
       0 0 -0.08726646259971647 0 -0.457924 0 -0.004940 0 0.452984 0
       0.3490658503988659 0 0.3490658503988659 0 0 0 0 0
       0 0 0.08726646259971647 0 0.457924 0 0.004940 0 -0.452984 0
-      0.18 0 0.035 1 0 0 0"
+      0.18 0.02 0.115 1 0 0 0"
       ctrl="
       0 -0.08726646259971647 -0.457924 -0.004940 0.452984
       0.3490658503988659 0.3490658503988659 0 0
@@ -58,7 +74,7 @@
       0 0 -0.08726646259971647 0 -0.457924 0 -0.004940 0 0.452984 0
       0.3490658503988659 0 0.3490658503988659 0 0 0 0 0
       0 0 0.08726646259971647 0 0.457924 0 0.004940 0 -0.452984 0
-      0.18 0 0.035 1 0 0 0"
+      0.18 0.02 0.115 1 0 0 0"
       ctrl="
       0 -0.08726646259971647 -0.457924 -0.004940 0.452984
       0.3490658503988659 0.3490658503988659 0 0
@@ -68,7 +84,7 @@
       0 0 0 0 -0.5236 0 1.0472 0 0 0
       0.5 0 1.6 0 0 0 0 0
       0 0 0 0 0.5236 0 -1.0472 0 0 0
-      0.18 0 0.035 1 0 0 0"
+      0.18 0.02 0.115 1 0 0 0"
       ctrl="
       0 0 -0.5236 1.0472 0
       0.5 1.6 0 0 0
@@ -78,7 +94,7 @@
       0 0 0 0 1.57 0 1.57 0 0 0
       1 0 1 0 0 0 0 0
       0 0 0 0 -1.57 0 -1.57 0 0 0
-      0.18 0 0.035 1 0 0 0"
+      0.18 0.02 0.115 1 0 0 0"
       ctrl="
       0 0 1.57 1.57 0
       1 1 0 0

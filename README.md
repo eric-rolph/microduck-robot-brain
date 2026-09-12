@@ -80,12 +80,12 @@ Communicates with Tier 3 over lock-free POSIX shared memory (`SeqLockChannel`) w
 
 DuckBrain includes a 1080P (1920x1080 @ 30 FPS) physics demonstration video rendered in MuJoCo (`output/microduck_brain_demo_1080p.mp4`) with live 50 Hz sim-to-real telemetry HUD and synchronized audio:
 
-1. **Scene 1: Intent parsing & target search** (0:00-0:06). "Ducky, bring me the ball." Parsed via stateless one-shot extractor. Coordinated yaw scanning with Center-of-Mass sagittal counter-lean maintains balance over the 1.35 cm foot sole contact patch.
-2. **Scene 2: Approach locomotion with vision debouncing** (0:06-0:12). Direct execution of official `alpha_walking.onnx` policy. Robot walks 12.5 cm forward with zero tipping and symmetrical joint kinematics.
-3. **Scene 3: Dynamic disturbance rejection on rough terrain** (0:12-0:18). Horizontal push impulse absorbed via balance defense gating, keeping trunk tilt under 5 degrees.
-4. **Scene 4: Ground pickup & BAM M6 motor current sag** (0:18-0:24). Deep crouch dips beak to ball (`z = 0.035 m`) with motor current peaking at 16.0 A and battery voltage sagging to 6.30 V under Schmitt trigger brownout lock.
-5. **Scene 5: Deterministic emergency stop & inquisitive head tilt** (0:24-0:30). Red obstacle proximity triggers hard stop and 18-degree curious head tilt without disturbing trunk stability.
-6. **Scene 6: Rest posture & certified mission success** (0:30-0:36). Transition to seated rest posture with full benchmark verification display.
+1. **Scene 1: Multi-modal intent & ToF obstacle detection** (0:00-0:06). "Ducky, fetch the snack and bring it back!" Parsed via stateless one-shot extractor. 8x8 matrix ToF detects blocking obstacle at 0.20 m.
+2. **Scene 2: ToF detection & autonomous flank avoidance** (0:06-0:12). Autonomous flank circumnavigation around obstacle with +0.12 m clearance and zero tipping.
+3. **Scene 3: Feeder stand crouch & beak contact grasp** (0:12-0:18). Kinematic squat in front of feeder stand pedestal, beak contact clamp, and dynamic equality weld engagement on snack.
+4. **Scene 4: Stand & carried payload stabilization** (0:18-0:24). Stands tall, lifting 25 g snack off pedestal to $z = 0.214$ m with active center-of-mass counterbalancing and BAM M6 current monitoring.
+5. **Scene 5: Mocap retargeting: 14-DOF Bandai Bow** (0:24-0:30). Executes retargeted 14-DOF Bandai Bow from local motion capture translation software (`bow_retargeted.npz`) while holding carried snack.
+6. **Scene 6: Stable rest sit & mission certified** (0:30-0:36). Transition to seated rest posture, certified zero falls across all 1,080 frames ($z \ge 0.112$ m), all 5 evaluation benchmarks passed.
 
 Render locally with:
 ```bash

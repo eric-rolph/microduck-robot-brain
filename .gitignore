@@ -40,6 +40,7 @@ cmake_install.cmake
 latency_hist.txt
 latency_plot.png
 *.log
+MUJOCO_LOG.TXT
 
 # IDE & OS
 .vscode/
