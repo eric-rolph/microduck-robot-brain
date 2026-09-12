@@ -254,8 +254,14 @@ class MicroduckMuJoCoEnv:
         tilt_error = float(proj_grav[0] ** 2 + proj_grav[1] ** 2)
         r_upright = math.exp(-4.0 * tilt_error)
 
-        # 4. Continuous survival reward: strong incentive to stay upright every step
-        r_survival = 2.0 * r_upright
+        # Forward velocity progress term: breaks the zero-velocity posture freeze
+        forward_vel = float(lin_vel_body[0])
+        if vx_target > 0.01:
+            r_progress = 3.0 * float(np.clip(forward_vel / vx_target, -0.5, 1.2))
+            r_survival = 2.0 * r_upright * max(0.2, min(1.0, forward_vel / vx_target))
+        else:
+            r_progress = 0.0
+            r_survival = 2.0 * r_upright
 
         # 5. Height maintenance: trunk z ~ 0.14 m
         trunk_z = float(self.data.xpos[self.trunk_body_id][2])
@@ -273,6 +279,7 @@ class MicroduckMuJoCoEnv:
 
         total_reward = (
             1.5 * r_linvel
+            + r_progress
             + 1.0 * r_angvel
             + 1.0 * r_upright
             + r_survival
@@ -313,16 +320,24 @@ class MicroduckMuJoCoEnv:
         clipped_action = np.clip(action, -1.0, 1.0).astype(np.float32)
         target_positions = DEFAULT_POSE[: self.model.nu] + clipped_action * self.action_scale
 
+        # Advance BAM M6 transport delay queue once per policy step (50 Hz / 20 ms)
+        delayed_targets = self.bam.step_delay(target_positions)
+
         # Run decimated sub-steps
         for _ in range(self.decimation):
             q_enc = self.backlash_mgr.read_encoder_positions(self.data)
             v_enc = self.backlash_mgr.read_encoder_velocities(self.data)
 
-            # BAM M6 computes motor torques
-            torques = self.bam.compute_torques(target_positions, q_enc, v_enc)
+            # BAM M6 computes motor torques & updates dynamic voltage/back-EMF limits
+            torques = self.bam.compute_torques(delayed_targets, q_enc, v_enc, advance_delay=False)
 
-            # Apply target setpoints modulated by BAM saturation
-            self.data.ctrl[:] = target_positions
+            # Actuator force coupling: enforce BAM dynamic torque limits on MuJoCo solver
+            dynamic_limits = self.bam.last_torque_limits
+            self.model.actuator_forcerange[:, 0] = -dynamic_limits
+            self.model.actuator_forcerange[:, 1] = dynamic_limits
+
+            # Apply setpoints
+            self.data.ctrl[:] = delayed_targets
 
             mujoco.mj_step(self.model, self.data)
 

@@ -79,10 +79,29 @@ class AttitudeCommandFilter:
 
 
 
+# Default STAND2 pose for Microduck biped (14-DOF)
+DEFAULT_POSE = np.array([
+    0.0,      # left_hip_yaw
+    -0.0873,  # left_hip_roll
+    -0.4579,  # left_hip_pitch
+    -0.0049,  # left_knee
+    0.4530,   # left_ankle
+    0.3491,   # neck_pitch
+    0.3491,   # head_pitch
+    0.0,      # head_yaw
+    0.0,      # head_roll
+    0.0,      # right_hip_yaw
+    0.0873,   # right_hip_roll
+    0.4579,   # right_hip_pitch
+    0.0049,   # right_knee
+    -0.4530,  # right_ankle
+], dtype=np.float32)
+
+
 class MicroduckLocomotionEngine:
     """
-    Evaluates the 48D ONNX quadruped policy at 50 Hz.
-    Outputs 12-DOF PD position targets.
+    Evaluates the 61-D ONNX biped policy at 50 Hz.
+    Outputs 14-DOF PD position targets.
     """
 
     def __init__(
@@ -93,17 +112,13 @@ class MicroduckLocomotionEngine:
         self.dt = dt
         self.attitude_filter = AttitudeCommandFilter(dt=dt, max_rate_rad_s=0.5)
 
-        # Nominal standing joint angles (12-DOF)
-        # FL: Hip, Thigh, Calf; FR; RL; RR
-        self.default_dof_pos = np.array([
-             0.1,  0.8, -1.5,   # FL
-            -0.1,  0.8, -1.5,   # FR
-             0.1,  1.0, -1.5,   # RL
-            -0.1,  1.0, -1.5,   # RR
-        ], dtype=np.float32)
+        # Nominal standing joint angles (14-DOF biped)
+        self.default_dof_pos = DEFAULT_POSE.copy()
 
         self.action_scale = 0.25
-        self.last_action = np.zeros(12, dtype=np.float32)
+        self.num_dofs = 14
+        self.obs_dim = 61
+        self.last_action = np.zeros(self.num_dofs, dtype=np.float32)
         self.session = None
         self.input_name = None
 
@@ -120,45 +135,59 @@ class MicroduckLocomotionEngine:
 
     def step(
         self,
-        raw_cmd: Tuple[float, float, float, float, float],  # (vx, vy, wz, roll_cmd, pitch_cmd)
-        projected_gravity: Sequence[float],                # [gx, gy, gz]
-        base_lin_vel: Sequence[float],                     # [vx, vy, vz]
-        base_ang_vel: Sequence[float],                     # [wx, wy, wz]
-        joint_pos: Sequence[float],                        # 12D current angles
-        joint_vel: Sequence[float],                        # 12D current velocities
+        raw_cmd: Tuple[float, float, float, float, float] | Sequence[float],  # (vx, vy, wz, roll_cmd, pitch_cmd) or 13D
+        projected_gravity: Sequence[float],                                 # [gx, gy, gz]
+        base_ang_vel: Sequence[float],                                      # [wx, wy, wz]
+        joint_pos: Sequence[float],                                         # 14D current angles
+        joint_vel: Sequence[float],                                         # 14D current velocities
+        base_lin_vel: Optional[Sequence[float]] = None,                     # [vx, vy, vz] optional
     ) -> np.ndarray:
         """
-        Runs one 50 Hz control cycle and returns 12 PD setpoints.
+        Runs one 50 Hz control cycle and returns 14 PD setpoints matching the 61-D contract.
         """
-        vx, vy, wz, raw_roll, raw_pitch = raw_cmd
+        if len(raw_cmd) == 5:
+            vx, vy, wz, raw_roll, raw_pitch = raw_cmd
+            safe_roll, safe_pitch = self.attitude_filter.process(raw_roll, raw_pitch, vx)
+            command = np.zeros(13, dtype=np.float32)
+            command[0] = vx
+            command[1] = vy
+            command[2] = wz
+            # Body pose roll/pitch in indices 7, 8
+            command[7] = safe_roll
+            command[8] = safe_pitch
+        elif len(raw_cmd) == 13:
+            command = np.asarray(raw_cmd, dtype=np.float32).copy()
+        elif len(raw_cmd) == 3:
+            vx, vy, wz = raw_cmd
+            command = np.zeros(13, dtype=np.float32)
+            command[0] = vx
+            command[1] = vy
+            command[2] = wz
+        else:
+            raise ValueError(f"Expected command length 3, 5, or 13, got {len(raw_cmd)}")
 
-        # 1. Rate-limit and attenuate attitude commands
-        safe_roll, safe_pitch = self.attitude_filter.process(raw_roll, raw_pitch, vx)
-        filtered_commands = np.array([vx, vy, wz, safe_roll, safe_pitch], dtype=np.float32)
-
-        # 2. Build normalized relative proprioceptive vector
+        # Build normalized relative proprioceptive vector
         joint_pos_arr = np.asarray(joint_pos, dtype=np.float32)
         joint_vel_arr = np.asarray(joint_vel, dtype=np.float32)
         joint_pos_rel = joint_pos_arr - self.default_dof_pos
 
-        # Observation shape: 48D
+        # Standard 61-D observation vector:
+        # [base_ang_vel (3), projected_gravity (3), q_rel (14), joint_vel (14), last_action (14), command (13)]
         observation = np.concatenate([
-            np.asarray(projected_gravity, dtype=np.float32),
-            np.asarray(base_lin_vel, dtype=np.float32),
-            np.asarray(base_ang_vel, dtype=np.float32),
-            joint_pos_rel,
-            joint_vel_arr * 0.05,
-            self.last_action,
-            filtered_commands,
+            np.asarray(base_ang_vel, dtype=np.float32)[:3],
+            np.asarray(projected_gravity, dtype=np.float32)[:3],
+            joint_pos_rel[:14],
+            joint_vel_arr[:14],
+            self.last_action[:14],
+            command[:13],
         ]).astype(np.float32).reshape(1, -1)
 
-        # 3. Model inference or fallback heuristic
+        # Model inference or fallback zero-action
         if self.session is not None and self.input_name is not None:
             outputs = self.session.run(None, {self.input_name: observation})
-            action = outputs[0][0]
+            action = outputs[0][0][:14]
         else:
-            # Fallback zero-offset policy for offline testing
-            action = np.zeros(12, dtype=np.float32)
+            action = np.zeros(self.num_dofs, dtype=np.float32)
 
         self.last_action = action.copy()
         target_joint_angles = self.default_dof_pos + (action * self.action_scale)

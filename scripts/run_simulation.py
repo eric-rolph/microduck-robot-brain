@@ -153,7 +153,7 @@ def run_demo() -> None:
     lin_vel = [0.4, 0.0, 0.0]
     ang_vel = [0.0, 0.0, 0.0]
     joint_pos = list(engine.default_dof_pos)
-    joint_vel = [0.0] * 12
+    joint_vel = [0.0] * 14
 
     pd_targets = engine.step(
         raw_cmd=raw_cmd,
@@ -163,7 +163,7 @@ def run_demo() -> None:
         joint_pos=joint_pos,
         joint_vel=joint_vel,
     )
-    print(f"  [Tier 4] Computed 12-DOF PD targets (first 3 FL joints: {np.round(pd_targets[:3], 3)})\n")
+    print(f"  [Tier 4] Computed 14-DOF PD targets (left hip joints: {np.round(pd_targets[:3], 3)})\n")
 
     print("[Summary] All four tiers completed execution deterministically.")
 

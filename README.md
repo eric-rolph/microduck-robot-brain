@@ -269,6 +269,24 @@ python scripts/run_mujoco_sim.py --steps 250 --onnx models/microduck_walk.onnx -
 python scripts/run_mujoco_sim.py --steps 250 --onnx models/microduck_walk.onnx --render
 ```
 
+### Real-task evaluation suite
+
+The evaluation suite executes five multi-tier benchmark missions verifying speech intent parsing, reactive behavior tree transitions, dynamic push disturbance rejection, bus brownout interlocks, and balance-subordinated body language:
+
+```bash
+python scripts/run_brain_eval_suite.py
+```
+
+Benchmark results:
+1. `fetch_with_push_rejection`: Full multi-phase mission (Search -> Approach -> Pickup -> Complete). During active walking at step 50, a +0.25 m/s lateral impulse is injected into the trunk. The robot stabilizes with maximum tilt 4.9 deg, maintains trunk height > 0.117 m, completes ground pick, and emits sound feedback with 0 falls.
+2. `battery_brownout_interlock`: Tests Dynamixel bus voltage sag under high-torque acceleration. WorldState detects sag at 6.30 V (< 6.50 V low cutoff), engages brownout lock, holds lock across partial recovery at 6.65 V via Schmitt trigger hysteresis, and clears lock only when voltage reaches 7.15 V (> 6.80 V high threshold).
+3. `fallen_state_safety_abort`: Enforces non-foot ground collision detection. When trunk drops below 0.080 m, safety watchdog detects non-foot ground contact, terminates the episode with -50.0 penalty, and commands immediate motor limp mode.
+4. `ambient_expression_balance_gating`: Verifies that ambient head scans flow during high stability, but clamp instantly to 0.0 deg offset when stability drops, preventing gestures from destabilizing gait. Failure branch triggers inquisitive head tilt on first search failure, and resigned head shake on third consecutive failure.
+5. `empirical_stability_envelope`: Rigorously benchmarks physical recovery limits across lateral and sagittal impulses:
+   * Lateral recovery envelope: vy <= 0.70 m/s (maximum tilt <= 13.0 deg, 0 falls).
+   * Sagittal recovery envelope: vx <= 0.40 m/s (maximum tilt <= 11.6 deg, 0 falls).
+   * Boundary overshoot trip: vy = 0.85 m/s trips tilt threshold (> 41.0 deg), executing watchdog abort and preventing uncontrolled motor thrashing.
+
 ## Isaac Lab policy export
 
 Export trained checkpoints to standalone ONNX:

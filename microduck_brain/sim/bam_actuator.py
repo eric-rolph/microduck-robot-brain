@@ -24,6 +24,7 @@ class BamM6Config:
     # Motor characteristics (XL330-M288)
     v_nominal: float = 7.4           # Rated voltage (V)
     stall_torque: float = 0.52       # Stall torque at 7.4V (N*m)
+    max_stall_current: float = 1.4   # Maximum physical stall current per servo (A)
     no_load_speed: float = 6.39      # Max angular velocity at 7.4V (rad/s)
     motor_resistance: float = 5.69   # Motor winding resistance (Ohms)
     torque_constant: float = 0.40    # Kt in N*m / A
@@ -53,6 +54,7 @@ class BamM6ActuatorModel:
         # State tracking
         self.battery_voltage: float = self.cfg.v_open_circuit
         self.last_torques: np.ndarray = np.zeros(num_actuators, dtype=np.float32)
+        self.last_torque_limits: np.ndarray = np.full(num_actuators, self.cfg.stall_torque, dtype=np.float32)
         self.last_current: float = self.cfg.idle_current
 
         # Delay queue for target setpoints
@@ -63,6 +65,7 @@ class BamM6ActuatorModel:
         """Reset internal battery state and delay queue."""
         self.battery_voltage = self.cfg.v_open_circuit
         self.last_torques = np.zeros(self.num_actuators, dtype=np.float32)
+        self.last_torque_limits = np.full(self.num_actuators, self.cfg.stall_torque, dtype=np.float32)
         self.last_current = self.cfg.idle_current
 
         self._delay_queue.clear()
@@ -70,10 +73,20 @@ class BamM6ActuatorModel:
         for _ in range(self.cfg.delay_steps):
             self._delay_queue.append(base.copy())
 
+    def step_delay(self, target_positions: np.ndarray) -> np.ndarray:
+        """Advance transport delay queue once per policy step (50 Hz)."""
+        self._delay_queue.append(target_positions.copy())
+        return self._delay_queue.popleft()
+
     def update_battery_voltage(self, active_torques: np.ndarray) -> float:
         """Compute battery terminal voltage after load-dependent internal resistance drop."""
-        # Total motor current from electromechanical torque
-        motor_currents = np.abs(active_torques) / max(self.cfg.torque_constant, 1e-4)
+        # Total motor current: bounded by physical stall current (1.4A per XL330 servo)
+        clamped_torques = np.clip(active_torques, -self.cfg.stall_torque, self.cfg.stall_torque)
+        motor_currents = np.clip(
+            np.abs(clamped_torques) / max(self.cfg.torque_constant, 1e-4),
+            0.0,
+            self.cfg.max_stall_current,
+        )
         total_current = float(np.sum(motor_currents)) + self.cfg.idle_current
         self.last_current = total_current
 
@@ -88,6 +101,7 @@ class BamM6ActuatorModel:
         target_positions: np.ndarray,
         measured_positions: np.ndarray,
         measured_velocities: np.ndarray,
+        advance_delay: bool = True,
     ) -> np.ndarray:
         """Calculate actuator torques according to BAM M6 dynamics.
 
@@ -99,6 +113,8 @@ class BamM6ActuatorModel:
             Encoder joint positions after backlash play (14D).
         measured_velocities : np.ndarray
             Encoder joint velocities after backlash play (14D).
+        advance_delay : bool
+            Whether to advance the delay queue during this call.
 
         Returns
         -------
@@ -106,23 +122,26 @@ class BamM6ActuatorModel:
             Torques to apply to the simulated joints (14D).
         """
         # 1. Transport delay
-        self._delay_queue.append(target_positions.copy())
-        delayed_targets = self._delay_queue.popleft()
+        if advance_delay:
+            self._delay_queue.append(target_positions.copy())
+            delayed_targets = self._delay_queue.popleft()
+        else:
+            delayed_targets = target_positions
 
         # 2. Firmware PD loop
         pos_error = delayed_targets - measured_positions
         raw_torques = self.cfg.kp * pos_error - self.cfg.kd * measured_velocities
 
-        # 3. Battery voltage sag based on torque demand
+        # 3. Battery voltage sag based on physical torque demand
         v_batt = self.update_battery_voltage(raw_torques)
 
         # 4. Back-EMF and velocity-dependent torque limits
-        # V_emf = Ke * |vel|
         v_emf = self.cfg.back_emf_constant * np.abs(measured_velocities)
         v_effective = np.maximum(0.0, v_batt - v_emf)
 
         # Torque limit scaled by available effective voltage
         tau_max = self.cfg.stall_torque * (v_effective / self.cfg.v_nominal)
+        self.last_torque_limits = tau_max.astype(np.float32)
 
         # 5. Gearbox friction and stiction
         net_torques = np.zeros_like(raw_torques)

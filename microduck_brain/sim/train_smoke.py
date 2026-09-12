@@ -30,7 +30,10 @@ class ActorCritic(nn.Module):
             nn.Linear(128, action_dim),
             nn.Tanh(),
         )
-        self.log_std = nn.Parameter(torch.ones(action_dim) * -0.5)
+        # Small weight initialization to keep actions near default pose during early exploration
+        nn.init.orthogonal_(self.actor[4].weight, gain=0.05)
+        nn.init.constant_(self.actor[4].bias, 0.0)
+        self.log_std = nn.Parameter(torch.ones(action_dim) * -1.2)
 
         # Critic network
         self.critic = nn.Sequential(
@@ -117,7 +120,7 @@ class MicroduckPPO:
 
         ep_returns = []
         cur_returns = np.zeros(self.num_envs)
-        total_episodes = 0
+        total_episodes = self.num_envs
         total_falls = 0
 
         with torch.no_grad():
@@ -149,9 +152,9 @@ class MicroduckPPO:
                     cur_returns[i] += r
 
                     if done:
-                        total_episodes += 1
                         if term:
                             total_falls += 1
+                        total_episodes += 1
                         ep_returns.append(cur_returns[i])
                         cur_returns[i] = 0.0
                         o = env.reset()
@@ -160,6 +163,10 @@ class MicroduckPPO:
                     next_obs.append(o)
 
                 current_obs = next_obs
+
+            for i in range(self.num_envs):
+                if cur_returns[i] > 0.0:
+                    ep_returns.append(cur_returns[i])
 
             # Final values for GAE
             last_obs_tensor = torch.tensor(
