@@ -1,0 +1,150 @@
+<mujoco model="microduck">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" iterations="50" solver="Newton" gravity="0 0 -9.81"/>
+
+  <default>
+    <default class="microduck">
+      <joint damping="0.05" frictionloss="0.01" armature="0.002"/>
+      <geom friction="1.2 0.005 0.0001" density="1000"/>
+      <position kp="20.0" kv="0.5" forcerange="-1.0 1.0"/>
+    </default>
+    <default class="foot_sole">
+      <geom friction="1.5 0.005 0.0001" solref="0.01 1" solimp="0.9 0.95 0.001" rgba="0.2 0.2 0.2 1"/>
+    </default>
+    <default class="chassis">
+      <geom rgba="0.95 0.8 0.15 1"/>
+    </default>
+    <default class="leg_link">
+      <geom rgba="0.25 0.25 0.25 1"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 2.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane"/>
+
+    <body name="trunk_base" pos="0 0 0.14">
+      <freejoint name="root_freejoint"/>
+      <geom name="trunk_geom" class="chassis" type="box" size="0.045 0.04 0.035" mass="0.32"/>
+      <site name="imu" pos="0 0 0" size="0.005"/>
+
+      <!-- Neck and Head assembly -->
+      <body name="neck" pos="0.035 0 0.03">
+        <joint name="neck_pitch" class="microduck" type="hinge" axis="0 1 0" range="-1.57 1.05"/>
+        <geom name="neck_geom" class="leg_link" type="capsule" fromto="0 0 0 0.015 0 0.02" size="0.012" mass="0.03"/>
+
+        <body name="head" pos="0.015 0 0.02">
+          <joint name="head_pitch" class="microduck" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+          <geom name="head_geom" class="chassis" type="sphere" size="0.03" pos="0.02 0 0.01" mass="0.08"/>
+          <!-- Beak / Jaw -->
+          <geom name="beak_geom" type="capsule" fromto="0.035 0 0.005 0.065 0 0.005" size="0.008" rgba="0.95 0.5 0.1 1" mass="0.01"/>
+
+          <body name="head_yaw_link" pos="0.02 0 0.01">
+            <joint name="head_yaw" class="microduck" type="hinge" axis="0 0 1" range="-2.5 2.5"/>
+            <geom name="head_yaw_geom" class="leg_link" type="cylinder" size="0.008 0.005" mass="0.02"/>
+
+            <body name="head_roll_link" pos="0 0 0">
+              <joint name="head_roll" class="microduck" type="hinge" axis="1 0 0" range="-0.45 0.45"/>
+              <geom name="head_roll_geom" class="leg_link" type="cylinder" size="0.008 0.005" mass="0.01"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- Left Leg (Joints 0-4) -->
+      <body name="left_hip_yaw_link" pos="0 0.035 -0.015">
+        <joint name="left_hip_yaw" class="microduck" type="hinge" axis="0 0 1" range="-0.45 0.55"/>
+        <geom name="left_hip_yaw_geom" class="leg_link" type="cylinder" size="0.012 0.008" mass="0.025"/>
+
+        <body name="left_hip_roll_link" pos="0 0.015 0">
+          <joint name="left_hip_roll" class="microduck" type="hinge" axis="1 0 0" range="-0.4 0.4"/>
+          <geom name="left_hip_roll_geom" class="leg_link" type="cylinder" size="0.012 0.008" mass="0.025"/>
+
+          <body name="left_thigh" pos="0 0 -0.01">
+            <joint name="left_hip_pitch" class="microduck" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+            <geom name="left_thigh_geom" class="leg_link" type="capsule" fromto="0 0 0 0 0 -0.045" size="0.01" mass="0.035"/>
+
+            <body name="left_shin" pos="0 0 -0.045">
+              <joint name="left_knee" class="microduck" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+              <geom name="left_shin_geom" class="leg_link" type="capsule" fromto="0 0 0 0 0 -0.045" size="0.009" mass="0.03"/>
+
+              <body name="left_foot" pos="0 0 -0.045">
+                <joint name="left_ankle" class="microduck" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+                <geom name="left_foot_geom" class="chassis" type="box" size="0.035 0.022 0.006" pos="0.01 0 -0.006" mass="0.03"/>
+                <geom name="left_foot_sole" class="foot_sole" type="box" size="0.035 0.022 0.002" pos="0.01 0 -0.013"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- Right Leg (Joints 9-13) -->
+      <body name="right_hip_yaw_link" pos="0 -0.035 -0.015">
+        <joint name="right_hip_yaw" class="microduck" type="hinge" axis="0 0 1" range="-0.55 0.45"/>
+        <geom name="right_hip_yaw_geom" class="leg_link" type="cylinder" size="0.012 0.008" mass="0.025"/>
+
+        <body name="right_hip_roll_link" pos="0 -0.015 0">
+          <joint name="right_hip_roll" class="microduck" type="hinge" axis="1 0 0" range="-0.4 0.4"/>
+          <geom name="right_hip_roll_geom" class="leg_link" type="cylinder" size="0.012 0.008" mass="0.025"/>
+
+          <body name="right_thigh" pos="0 0 -0.01">
+            <joint name="right_hip_pitch" class="microduck" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+            <geom name="right_thigh_geom" class="leg_link" type="capsule" fromto="0 0 0 0 0 -0.045" size="0.01" mass="0.035"/>
+
+            <body name="right_shin" pos="0 0 -0.045">
+              <joint name="right_knee" class="microduck" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+              <geom name="right_shin_geom" class="leg_link" type="capsule" fromto="0 0 0 0 0 -0.045" size="0.009" mass="0.03"/>
+
+              <body name="right_foot" pos="0 0 -0.045">
+                <joint name="right_ankle" class="microduck" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+                <geom name="right_foot_geom" class="chassis" type="box" size="0.035 0.022 0.006" pos="0.01 0 -0.006" mass="0.03"/>
+                <geom name="right_foot_sole" class="foot_sole" type="box" size="0.035 0.022 0.002" pos="0.01 0 -0.013"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+    </body >
+  </worldbody>
+
+  <actuator>
+    <!-- Left Leg (0-4) -->
+    <position name="left_hip_yaw" joint="left_hip_yaw" class="microduck"/>
+    <position name="left_hip_roll" joint="left_hip_roll" class="microduck"/>
+    <position name="left_hip_pitch" joint="left_hip_pitch" class="microduck"/>
+    <position name="left_knee" joint="left_knee" class="microduck"/>
+    <position name="left_ankle" joint="left_ankle" class="microduck"/>
+
+    <!-- Neck & Head (5-8) -->
+    <position name="neck_pitch" joint="neck_pitch" class="microduck"/>
+    <position name="head_pitch" joint="head_pitch" class="microduck"/>
+    <position name="head_yaw" joint="head_yaw" class="microduck"/>
+    <position name="head_roll" joint="head_roll" class="microduck"/>
+
+    <!-- Right Leg (9-13) -->
+    <position name="right_hip_yaw" joint="right_hip_yaw" class="microduck"/>
+    <position name="right_hip_roll" joint="right_hip_roll" class="microduck"/>
+    <position name="right_hip_pitch" joint="right_hip_pitch" class="microduck"/>
+    <position name="right_knee" joint="right_knee" class="microduck"/>
+    <position name="right_ankle" joint="right_ankle" class="microduck"/>
+  </actuator>
+
+  <sensor>
+    <gyro name="imu_ang_vel" site="imu"/>
+    <accelerometer name="imu_accel" site="imu"/>
+  </sensor>
+
+  <keyframe>
+    <!-- STAND2 pose (HOME_FRAME) -->
+    <key name="STAND2"
+         qpos="0 0 0.14 1 0 0 0 0.0 -0.0873 -0.4579 -0.0049 0.4530 0.3491 0.3491 0.0 0.0 0.0 0.0873 0.4579 0.0049 -0.4530"
+         ctrl="0.0 -0.0873 -0.4579 -0.0049 0.4530 0.3491 0.3491 0.0 0.0 0.0 0.0873 0.4579 0.0049 -0.4530"/>
+  </keyframe>
+</mujoco>

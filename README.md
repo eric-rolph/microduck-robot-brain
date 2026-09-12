@@ -93,7 +93,14 @@ microduck-robot-brain/
 │   ├── logit_masking.py        # Precondition logit masking
 │   ├── skill_latch.py          # Asynchronous skill latching
 │   ├── behavior_tree.py        # BT nodes and expression logic
-│   └── locomotion_engine.py    # Attitude filter and ONNX runner
+│   ├── locomotion_engine.py    # Attitude filter and ONNX runner
+│   ├── pollen_bridge.py        # IPC client for Pollen robotd socket
+│   └── sim/                    # Sim-to-real MuJoCo physics stack
+│       ├── mjcf/               # Self-contained Microduck XML models
+│       ├── bam_actuator.py     # BAM M6 DC motor & battery sag model
+│       ├── backlash.py         # Mechanical backlash twin dynamics
+│       ├── env.py              # Gym environment with 61D contract
+│       └── train_smoke.py      # Local PyTorch PPO training runner
 ├── isaac_lab/
 │   ├── env_cfg.py              # Isaac Lab RL config with domain randomization
 │   └── export_onnx.py          # ONNX model exporter
@@ -106,8 +113,9 @@ microduck-robot-brain/
 ├── scripts/
 │   ├── shield_rt_cores.sh      # IRQ affinity steering script
 │   ├── plot_latency.py         # Cyclictest latency distribution plotter
-│   └── run_simulation.py       # End-to-end multi-tier simulation demo
-└── tests/                      # Pytest test suite
+│   ├── run_simulation.py       # End-to-end multi-tier simulation demo
+│   └── run_mujoco_sim.py       # Behavior Tree MuJoCo sim runner
+└── tests/                      # Pytest unit & integration test suite
 ```
 
 ## Quick start
@@ -197,7 +205,60 @@ Plot results:
 python scripts/plot_latency.py latency_hist.txt
 ```
 
-The 50 Hz loop budget is 20 ms. Target scheduling jitter on Core 4 is under 50 microseconds.
+## Sim-to-real MuJoCo pipeline
+
+Pollen Robotics trains Microduck locomotion and recovery behaviors in MuJoCo and deploys identical weights directly to physical bipeds. The framework bridges the reality gap with actuator physics, mechanical backlash emulation, and a strict 61-D observation contract.
+
+### 61-D observation contract
+
+```
+[ Proprioception: 48D ]
+  0..3:   Base angular velocity from IMU gyro (rad/s)
+  3..6:   Projected gravity vector in trunk frame (unit vector)
+  6..20:  Joint positions relative to HOME_FRAME through backlash (rad)
+  20..34: Joint velocities through backlash (rad/s)
+  34..48: Last applied action (14D)
+
+[ Commands: 13D ]
+  48..51: Twist command [vx, vy, vyaw] (m/s, m/s, rad/s)
+  51..55: Head pose delta [neck_pitch, head_pitch, head_yaw, head_roll] (rad)
+  55..61: Body pose delta [x, y, z, roll, pitch, yaw] (m, m, m, rad, rad, rad)
+Total: 48 + 13 = 61 dimensions
+```
+
+### BAM M6 actuator modeling
+Dynamixel XL330 servos exhibit non-linear behavior under load:
+* Battery voltage sag: Battery voltage drops from 8.2 V down to ~6.5 V under surge currents, reducing available torque: `V_batt = max(V_min, V_oc - I_total * R_internal)`.
+* Back-EMF velocity limit: Torque decreases as motor velocity rises: `V_eff = max(0, V_batt - Ke * |vel|)`.
+* Gearbox friction: XL330 gear trains introduce Coulomb friction and stiction thresholds that prevent motion under sub-threshold torques.
+* Transport delay: Models digital bus communication delay (1 to 4 steps) before commands reach the motors.
+
+### Mechanical backlash twin
+To emulate 3D-printed horn play and gear backlash, `microduck_walk_backlash.xml` pairs every actuated joint with an unactuated `passive_<joint>_backlash` hinge in series (+/-1 degree free play). The simulation passes output-side encoder readings `q_enc = q_servo + q_backlash` into the 61-D observation vector, forcing policies to stabilize across mechanical deadbands.
+
+### Local PPO training run
+
+Run a local PyTorch PPO training run on CPU or CUDA:
+
+```bash
+# Smoke test (5 iterations, 4 parallel environments)
+python -m microduck_brain.sim.train_smoke --iterations 5 --num-envs 4 --steps-per-env 64
+
+# Export trained policy weights directly to ONNX
+python -m microduck_brain.sim.train_smoke --iterations 10 --export-onnx models/microduck_walk.onnx
+```
+
+### End-to-end DuckBrain MuJoCo simulation
+
+Execute high-level Behavior Tree goals (`FETCH_BALL` -> Search in-place turn -> Approach forward walk -> Pickup ground dip) driving the 50 Hz physics loop:
+
+```bash
+# Headless run with cycle latency and battery sag summary
+python scripts/run_mujoco_sim.py --steps 250 --onnx models/microduck_walk.onnx --headless
+
+# Interactive viewer mode (requires display)
+python scripts/run_mujoco_sim.py --steps 250 --onnx models/microduck_walk.onnx --render
+```
 
 ## Isaac Lab policy export
 

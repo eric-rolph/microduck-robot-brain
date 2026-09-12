@@ -16,6 +16,7 @@ dependencies = [
     "numpy>=1.24.0",
     "torch>=2.0.0",
     "onnxruntime>=1.15.0",
+    "mujoco>=3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,9 @@ dev = [
     "matplotlib>=3.7.0",
     "psutil>=5.9.0",
 ]
+
+[tool.setuptools.package-data]
+"microduck_brain.sim.mjcf" = ["*.xml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

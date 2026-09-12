@@ -1,0 +1,291 @@
+"""Standalone MuJoCo simulation environment for Microduck biped.
+
+Implements the standardized 61-D observation contract, 14-D action space,
+BAM M6 actuator modeling, and mechanical backlash twin dynamics.
+"""
+
+from __future__ import annotations
+
+import math
+from pathlib import Path
+from typing import Any
+import mujoco
+import numpy as np
+
+from microduck_brain.sim.backlash import BacklashManager
+from microduck_brain.sim.bam_actuator import BamM6ActuatorModel, BamM6Config
+
+# Default STAND2 pose (HOME_FRAME)
+DEFAULT_POSE = np.array([
+    0.0,      # left_hip_yaw
+    -0.0873,  # left_hip_roll
+    -0.4579,  # left_hip_pitch
+    -0.0049,  # left_knee
+    0.4530,   # left_ankle
+    0.3491,   # neck_pitch
+    0.3491,   # head_pitch
+    0.0,      # head_yaw
+    0.0,      # head_roll
+    0.0,      # right_hip_yaw
+    0.0873,   # right_hip_roll
+    0.4579,   # right_hip_pitch
+    0.0049,   # right_knee
+    -0.4530,  # right_ankle
+], dtype=np.float32)
+
+
+def quat_rotate_inverse(quat: np.ndarray, vec: np.ndarray) -> np.ndarray:
+    """Rotate a 3D vector by the inverse of quaternion [w, x, y, z]."""
+    w = quat[0]
+    xyz = quat[1:4]
+    t = np.cross(xyz, vec) * 2.0
+    return vec - w * t + np.cross(xyz, t)
+
+
+class MicroduckMuJoCoEnv:
+    """MuJoCo simulation environment for Microduck matching the 61-D contract."""
+
+    def __init__(
+        self,
+        xml_path: str | Path | None = None,
+        use_backlash: bool = True,
+        action_scale: float = 0.25,
+        decimation: int = 10,
+        bam_config: BamM6Config | None = None,
+    ) -> None:
+        self.action_scale = action_scale
+        self.decimation = decimation
+
+        if xml_path is None:
+            base_dir = Path(__file__).parent / "mjcf"
+            filename = "microduck_walk_backlash.xml" if use_backlash else "microduck_walk.xml"
+            xml_path = base_dir / filename
+
+        self.xml_path = str(xml_path)
+        self.model = mujoco.MjModel.from_xml_path(self.xml_path)
+        self.data = mujoco.MjData(self.model)
+
+        # Backlash twin manager
+        self.backlash_mgr = BacklashManager(self.model)
+
+        # BAM M6 actuator model
+        self.bam = BamM6ActuatorModel(num_actuators=self.model.nu, config=bam_config)
+
+        # Sensor and body IDs
+        self.trunk_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "trunk_base")
+        self.imu_gyro_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, "imu_ang_vel")
+        self.imu_accel_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, "imu_accel")
+
+        # 13D command vector: twist(3), head_pose(4), body_pose(6)
+        self.command = np.zeros(13, dtype=np.float32)
+        self.last_action = np.zeros(self.model.nu, dtype=np.float32)
+        self.step_count = 0
+
+        # Pre-allocate observation vector (61D)
+        self.obs_dim = 61
+        self.action_dim = self.model.nu
+
+    def set_command(
+        self,
+        lin_vel_x: float = 0.0,
+        lin_vel_y: float = 0.0,
+        ang_vel_z: float = 0.0,
+        head_pose: np.ndarray | None = None,
+        body_pose: np.ndarray | None = None,
+    ) -> None:
+        """Set the 13-D command vector for locomotion and posture."""
+        self.command[0] = lin_vel_x
+        self.command[1] = lin_vel_y
+        self.command[2] = ang_vel_z
+
+        if head_pose is not None:
+            self.command[3:7] = head_pose[:4]
+        else:
+            self.command[3:7] = 0.0
+
+        if body_pose is not None:
+            self.command[7:13] = body_pose[:6]
+        else:
+            self.command[7:13] = 0.0
+
+    def get_projected_gravity(self) -> np.ndarray:
+        """Get projected gravity vector [gx, gy, gz] in trunk base frame."""
+        quat = self.data.xquat[self.trunk_body_id].copy().astype(np.float32)
+        world_gravity = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+        return quat_rotate_inverse(quat, world_gravity)
+
+    def get_base_angular_velocity(self) -> np.ndarray:
+        """Get base angular velocity from IMU gyro sensor."""
+        sensor_adr = self.model.sensor_adr[self.imu_gyro_id]
+        return self.data.sensordata[sensor_adr : sensor_adr + 3].copy().astype(np.float32)
+
+    def get_base_linear_velocity(self) -> np.ndarray:
+        """Get trunk base linear velocity in world frame."""
+        # 3D linear velocity is the first 3 DOF of the root freejoint
+        return self.data.qvel[0:3].copy().astype(np.float32)
+
+    def get_observation(self) -> np.ndarray:
+        """Construct the standardized 61-D observation vector.
+
+        Components:
+        1. base_ang_vel: 3D
+        2. projected_gravity: 3D
+        3. joint_pos relative to DEFAULT_POSE: 14D (through backlash)
+        4. joint_vel: 14D (through backlash)
+        5. last_action: 14D
+        6. command: 13D
+        Total: 3 + 3 + 14 + 14 + 14 + 13 = 61D
+        """
+        ang_vel = self.get_base_angular_velocity()
+        proj_grav = self.get_projected_gravity()
+
+        q_enc = self.backlash_mgr.read_encoder_positions(self.data)
+        v_enc = self.backlash_mgr.read_encoder_velocities(self.data)
+
+        q_rel = q_enc - DEFAULT_POSE[: self.model.nu]
+
+        obs = np.concatenate(
+            [ang_vel, proj_grav, q_rel, v_enc, self.last_action, self.command]
+        ).astype(np.float32)
+        return obs
+
+    def reset(self, randomize_noise: float = 0.01) -> np.ndarray:
+        """Reset environment to standing keyframe pose."""
+        mujoco.mj_resetData(self.model, self.data)
+
+        # Apply STAND2 keyframe if present
+        key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "STAND2")
+        if key_id >= 0:
+            mujoco.mj_resetDataKeyframe(self.model, self.data, key_id)
+        else:
+            # Fallback manual default pose
+            self.data.qpos[0:3] = [0.0, 0.0, 0.14]
+            self.data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+            # Set joint positions
+            for i, adr in enumerate(self.backlash_mgr.servo_qpos_adr):
+                self.data.qpos[adr] = DEFAULT_POSE[i]
+            self.data.ctrl[:] = DEFAULT_POSE[: self.model.nu]
+
+        if randomize_noise > 0.0:
+            noise = np.random.uniform(
+                -randomize_noise, randomize_noise, size=len(self.backlash_mgr.servo_qpos_adr)
+            )
+            for i, adr in enumerate(self.backlash_mgr.servo_qpos_adr):
+                self.data.qpos[adr] += noise[i]
+
+        mujoco.mj_forward(self.model, self.data)
+
+        # Reset BAM M6 internal state
+        self.bam.reset(initial_targets=DEFAULT_POSE[: self.model.nu])
+        self.last_action = np.zeros(self.model.nu, dtype=np.float32)
+        self.step_count = 0
+
+        return self.get_observation()
+
+    def compute_reward(self, obs: np.ndarray, action: np.ndarray) -> float:
+        """Compute tracking, posture, and regularization rewards."""
+        # 1. Linear velocity tracking in robot heading
+        lin_vel_world = self.get_base_linear_velocity()
+        quat = self.data.xquat[self.trunk_body_id].copy().astype(np.float32)
+        lin_vel_body = quat_rotate_inverse(quat, lin_vel_world)
+
+        vx_target = self.command[0]
+        vy_target = self.command[1]
+        vel_error = (lin_vel_body[0] - vx_target) ** 2 + (lin_vel_body[1] - vy_target) ** 2
+        r_linvel = math.exp(-4.0 * vel_error)
+
+        # 2. Yaw velocity tracking
+        ang_vel = obs[0:3]
+        wz_target = self.command[2]
+        ang_error = (ang_vel[2] - wz_target) ** 2
+        r_angvel = math.exp(-3.0 * ang_error)
+
+        # 3. Upright orientation: projected gravity z should be near -1.0
+        proj_grav = obs[3:6]
+        tilt_error = proj_grav[0] ** 2 + proj_grav[1] ** 2
+        r_upright = math.exp(-3.0 * tilt_error)
+
+        # 4. Height maintenance: trunk z ~ 0.14 m
+        trunk_z = float(self.data.xpos[self.trunk_body_id][2])
+        r_height = math.exp(-50.0 * ((trunk_z - 0.14) ** 2))
+
+        # 5. Smoothness penalties
+        action_diff = float(np.sum((action - self.last_action) ** 2))
+        torque_penalty = float(np.sum(self.bam.last_torques ** 2))
+
+        total_reward = (
+            1.5 * r_linvel
+            + 1.0 * r_angvel
+            + 1.0 * r_upright
+            + 1.0 * r_height
+            - 0.05 * action_diff
+            - 0.005 * torque_penalty
+        )
+        return float(total_reward)
+
+    def is_terminated(self) -> bool:
+        """Check for fall or height collapse."""
+        trunk_z = min(float(self.data.qpos[2]), float(self.data.xpos[self.trunk_body_id][2]))
+        if trunk_z < 0.065:
+            return True
+
+        proj_grav = self.get_projected_gravity()
+        # If gravity z > -0.5, robot has tipped over > 60 degrees
+        if proj_grav[2] > -0.5:
+            return True
+
+        return False
+
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
+        """Advance the simulation by one policy step (decimated physics sub-steps).
+
+        Parameters
+        ----------
+        action : np.ndarray
+            Policy action delta (14D) in [-1.0, 1.0].
+
+        Returns
+        -------
+        obs : np.ndarray
+            61-D observation vector.
+        reward : float
+            Step reward.
+        terminated : bool
+            True if robot fell.
+        truncated : bool
+            False (or max steps exceeded).
+        info : dict
+            Diagnostic metrics (battery voltage, torque norms, velocities).
+        """
+        clipped_action = np.clip(action, -1.0, 1.0).astype(np.float32)
+        target_positions = DEFAULT_POSE[: self.model.nu] + clipped_action * self.action_scale
+
+        # Run decimated sub-steps
+        for _ in range(self.decimation):
+            q_enc = self.backlash_mgr.read_encoder_positions(self.data)
+            v_enc = self.backlash_mgr.read_encoder_velocities(self.data)
+
+            # BAM M6 computes motor torques
+            torques = self.bam.compute_torques(target_positions, q_enc, v_enc)
+
+            # Apply target setpoints modulated by BAM saturation
+            self.data.ctrl[:] = target_positions
+
+            mujoco.mj_step(self.model, self.data)
+
+        self.step_count += 1
+        obs = self.get_observation()
+        reward = self.compute_reward(obs, clipped_action)
+        terminated = self.is_terminated()
+        truncated = self.step_count >= 1000
+
+        info = {
+            "battery_voltage": self.bam.battery_voltage,
+            "battery_current": self.bam.last_current,
+            "trunk_height": float(self.data.xpos[self.trunk_body_id][2]),
+            "projected_gravity": obs[3:6],
+            "step": self.step_count,
+        }
+
+        self.last_action = clipped_action.copy()
+        return obs, reward, terminated, truncated, info
