@@ -85,6 +85,21 @@ class MicroduckMuJoCoEnv:
         self.obs_dim = 61
         self.action_dim = self.model.nu
 
+        # Geom classification for anti-fall ground collision gating
+        self.floor_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
+        foot_names = {"left_foot_geom", "left_foot_sole", "right_foot_geom", "right_foot_sole"}
+        self.foot_geom_ids = {
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name)
+            for name in foot_names
+            if mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, name) >= 0
+        }
+        self.non_foot_geom_ids = {
+            i for i in range(self.model.ngeom)
+            if i != self.floor_geom_id and i not in self.foot_geom_ids
+        }
+        self.fall_penalty = 50.0
+
+
     def set_command(
         self,
         lin_vel_x: float = 0.0,
@@ -182,8 +197,42 @@ class MicroduckMuJoCoEnv:
 
         return self.get_observation()
 
-    def compute_reward(self, obs: np.ndarray, action: np.ndarray) -> float:
-        """Compute tracking, posture, and regularization rewards."""
+    def check_non_foot_ground_collision(self) -> bool:
+        """Returns True if any non-foot body collides with the ground floor."""
+        for i in range(self.data.ncon):
+            c = self.data.contact[i]
+            g1, g2 = c.geom1, c.geom2
+            if g1 == self.floor_geom_id:
+                if g2 in self.non_foot_geom_ids:
+                    return True
+            elif g2 == self.floor_geom_id:
+                if g1 in self.non_foot_geom_ids:
+                    return True
+        return False
+
+    def is_terminated(self) -> bool:
+        """Check for fall, ground strike, or height collapse."""
+        trunk_z = min(float(self.data.qpos[2]), float(self.data.xpos[self.trunk_body_id][2]))
+        # Standing height is ~0.14 m. Drop below 0.080 m is a collapse.
+        if trunk_z < 0.080:
+            return True
+
+        proj_grav = self.get_projected_gravity()
+        # If gravity z > -0.75, robot has tilted > 41 degrees (unrecoverable fall)
+        if proj_grav[2] > -0.75:
+            return True
+
+        # Check for non-foot collision (knees, head, trunk hitting floor)
+        if self.check_non_foot_ground_collision():
+            return True
+
+        return False
+
+    def compute_reward(self, obs: np.ndarray, action: np.ndarray, is_fall: bool = False) -> float:
+        """Compute tracking, posture, balance survival, and regularization rewards."""
+        if is_fall:
+            return -self.fall_penalty
+
         # 1. Linear velocity tracking in robot heading
         lin_vel_world = self.get_base_linear_velocity()
         quat = self.data.xquat[self.trunk_body_id].copy().astype(np.float32)
@@ -202,14 +251,23 @@ class MicroduckMuJoCoEnv:
 
         # 3. Upright orientation: projected gravity z should be near -1.0
         proj_grav = obs[3:6]
-        tilt_error = proj_grav[0] ** 2 + proj_grav[1] ** 2
-        r_upright = math.exp(-3.0 * tilt_error)
+        tilt_error = float(proj_grav[0] ** 2 + proj_grav[1] ** 2)
+        r_upright = math.exp(-4.0 * tilt_error)
 
-        # 4. Height maintenance: trunk z ~ 0.14 m
+        # 4. Continuous survival reward: strong incentive to stay upright every step
+        r_survival = 2.0 * r_upright
+
+        # 5. Height maintenance: trunk z ~ 0.14 m
         trunk_z = float(self.data.xpos[self.trunk_body_id][2])
         r_height = math.exp(-50.0 * ((trunk_z - 0.14) ** 2))
 
-        # 5. Smoothness penalties
+        # 6. Anti-fall stabilization penalties
+        # Lateral drift penalty: penalize uncommanded sideways sliding
+        side_drift_penalty = float(lin_vel_body[1] ** 2)
+        # Roll and pitch angular velocity penalty: penalize trunk rocking/wobbling
+        wobble_penalty = float(ang_vel[0] ** 2 + ang_vel[1] ** 2)
+
+        # 7. Smoothness penalties
         action_diff = float(np.sum((action - self.last_action) ** 2))
         torque_penalty = float(np.sum(self.bam.last_torques ** 2))
 
@@ -217,24 +275,19 @@ class MicroduckMuJoCoEnv:
             1.5 * r_linvel
             + 1.0 * r_angvel
             + 1.0 * r_upright
+            + r_survival
             + 1.0 * r_height
+            - 0.5 * side_drift_penalty
+            - 0.15 * wobble_penalty
             - 0.05 * action_diff
             - 0.005 * torque_penalty
         )
         return float(total_reward)
 
-    def is_terminated(self) -> bool:
-        """Check for fall or height collapse."""
-        trunk_z = min(float(self.data.qpos[2]), float(self.data.xpos[self.trunk_body_id][2]))
-        if trunk_z < 0.065:
-            return True
-
-        proj_grav = self.get_projected_gravity()
-        # If gravity z > -0.5, robot has tipped over > 60 degrees
-        if proj_grav[2] > -0.5:
-            return True
-
-        return False
+    def apply_push_disturbance(self, delta_vx: float, delta_vy: float) -> None:
+        """Inject an impulsive velocity perturbation to the trunk base to train recovery."""
+        self.data.qvel[0] += float(delta_vx)
+        self.data.qvel[1] += float(delta_vy)
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """Advance the simulation by one policy step (decimated physics sub-steps).
@@ -275,8 +328,8 @@ class MicroduckMuJoCoEnv:
 
         self.step_count += 1
         obs = self.get_observation()
-        reward = self.compute_reward(obs, clipped_action)
         terminated = self.is_terminated()
+        reward = self.compute_reward(obs, clipped_action, is_fall=terminated)
         truncated = self.step_count >= 1000
 
         info = {
@@ -285,7 +338,9 @@ class MicroduckMuJoCoEnv:
             "trunk_height": float(self.data.xpos[self.trunk_body_id][2]),
             "projected_gravity": obs[3:6],
             "step": self.step_count,
+            "is_fall": terminated,
         }
 
         self.last_action = clipped_action.copy()
         return obs, reward, terminated, truncated, info
+

@@ -75,6 +75,7 @@ class MicroduckPPO:
         clip_ratio: float = 0.2,
         gamma: float = 0.99,
         lam: float = 0.95,
+        enable_push_curriculum: bool = False,
     ) -> None:
         self.num_envs = num_envs
         self.steps_per_env = steps_per_env
@@ -82,11 +83,13 @@ class MicroduckPPO:
         self.clip_ratio = clip_ratio
         self.gamma = gamma
         self.lam = lam
+        self.enable_push_curriculum = enable_push_curriculum
 
         # Initialize parallel environments
         self.envs = [MicroduckMuJoCoEnv(use_backlash=True) for _ in range(num_envs)]
         self.model = ActorCritic(obs_dim=61, action_dim=14).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+
 
     def collect_rollouts(
         self,
@@ -114,9 +117,18 @@ class MicroduckPPO:
 
         ep_returns = []
         cur_returns = np.zeros(self.num_envs)
+        total_episodes = 0
+        total_falls = 0
 
         with torch.no_grad():
             for t in range(self.steps_per_env):
+                # Anti-fall push disturbance curriculum: periodic impulse kicks
+                if self.enable_push_curriculum and (t % 24 == 12):
+                    for env in self.envs:
+                        delta_vx = float(np.random.uniform(-0.25, 0.25))
+                        delta_vy = float(np.random.uniform(-0.20, 0.20))
+                        env.apply_push_disturbance(delta_vx, delta_vy)
+
                 obs_tensor = torch.tensor(
                     np.array(current_obs), dtype=torch.float32, device=self.device
                 )
@@ -137,6 +149,9 @@ class MicroduckPPO:
                     cur_returns[i] += r
 
                     if done:
+                        total_episodes += 1
+                        if term:
+                            total_falls += 1
                         ep_returns.append(cur_returns[i])
                         cur_returns[i] = 0.0
                         o = env.reset()
@@ -178,9 +193,13 @@ class MicroduckPPO:
         # Normalize advantages
         flat_adv = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)
 
+        fall_rate = float(total_falls / total_episodes) if total_episodes > 0 else 0.0
         stats = {
             "mean_reward": float(rew_buf.mean().item()),
             "mean_return": float(np.mean(ep_returns)) if ep_returns else float(cur_returns.mean()),
+            "fall_rate": fall_rate,
+            "total_falls": total_falls,
+            "total_episodes": total_episodes,
         }
         return flat_obs, flat_act, flat_logp, flat_adv, flat_ret, stats
 
@@ -210,7 +229,7 @@ class MicroduckPPO:
                 b_adv = advantages[batch_idx]
                 b_ret = returns[batch_idx]
 
-                new_logp, val, entropy = self.model.evaluate_actions(b_obs, b_act)
+                new_logp, new_val, entropy = self.model.evaluate_actions(b_obs, b_act)
 
                 # Ratio
                 ratio = torch.exp(new_logp - b_old_logp)
@@ -219,19 +238,21 @@ class MicroduckPPO:
                 policy_loss = -torch.min(surr1, surr2).mean()
 
                 # Value loss
-                value_loss = 0.5 * ((val - b_ret) ** 2).mean()
+                value_loss = 0.5 * ((new_val - b_ret) ** 2).mean()
 
                 loss = policy_loss + 0.5 * value_loss - 0.01 * entropy.mean()
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=0.5)
                 self.optimizer.step()
 
-                approx_kl = ((ratio - 1.0) - torch.log(ratio)).mean()
                 policy_losses.append(policy_loss.item())
                 value_losses.append(value_loss.item())
-                kls.append(approx_kl.item())
+
+                with torch.no_grad():
+                    approx_kl = (b_old_logp - new_logp).mean().item()
+                    kls.append(approx_kl)
 
         return {
             "policy_loss": float(np.mean(policy_losses)),
@@ -250,6 +271,8 @@ class MicroduckPPO:
                 "iteration": it,
                 "mean_reward": collect_stats["mean_reward"],
                 "mean_return": collect_stats["mean_return"],
+                "fall_rate": collect_stats["fall_rate"],
+                "total_falls": collect_stats["total_falls"],
                 "policy_loss": update_stats["policy_loss"],
                 "value_loss": update_stats["value_loss"],
                 "approx_kl": update_stats["approx_kl"],
@@ -259,6 +282,7 @@ class MicroduckPPO:
                 f"[PPO Iter {it:2d}/{iterations}] "
                 f"Reward: {metrics['mean_reward']:6.2f} | "
                 f"Return: {metrics['mean_return']:6.1f} | "
+                f"FallRate: {metrics['fall_rate']*100:4.1f}% | "
                 f"PolLoss: {metrics['policy_loss']:+7.4f} | "
                 f"ValLoss: {metrics['value_loss']:6.4f} | "
                 f"KL: {metrics['approx_kl']:6.4f}"
@@ -297,20 +321,23 @@ class MicroduckPPO:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Microduck MuJoCo PPO training smoke runner")
+    parser = argparse.ArgumentParser(description="Microduck MuJoCo PPO training runner")
     parser.add_argument("--iterations", type=int, default=5, help="Number of PPO iterations")
     parser.add_argument("--num-envs", type=int, default=4, help="Parallel environments")
     parser.add_argument("--steps-per-env", type=int, default=64, help="Steps per rollout")
     parser.add_argument("--export-onnx", type=str, default="models/microduck_walk.onnx")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--anti-fall", action="store_true", default=True, help="Enable anti-fall push disturbance curriculum")
+    parser.add_argument("--no-anti-fall", action="store_false", dest="anti_fall", help="Disable push curriculum")
 
     args = parser.parse_args()
 
-    print(f"Starting Microduck PPO training run on {args.device}...")
+    print(f"Starting Microduck PPO training run on {args.device} (anti-fall curriculum: {args.anti_fall})...")
     trainer = MicroduckPPO(
         num_envs=args.num_envs,
         steps_per_env=args.steps_per_env,
         device=args.device,
+        enable_push_curriculum=args.anti_fall,
     )
     history = trainer.train_smoke(iterations=args.iterations)
 

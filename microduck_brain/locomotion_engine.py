@@ -5,6 +5,7 @@ assembles the 48D observation vector, and evaluates the ONNX locomotion policy.
 """
 
 from __future__ import annotations
+import math
 import os
 from typing import Optional, Sequence, Tuple
 import numpy as np
@@ -56,8 +57,26 @@ class AttitudeCommandFilter:
 
         return float(self.filtered_attitude[0]), float(self.filtered_attitude[1])
 
+    def compute_safe_velocity(
+        self,
+        target_vx: float,
+        measured_roll: float,
+        measured_pitch: float,
+        tilt_limit_rad: float = 0.26,  # ~15 degrees
+    ) -> float:
+        """
+        Attenuates forward velocity when robot attitude tilts away from upright.
+        Prevents pitching tumble falls by slowing down or stopping before balance is lost.
+        """
+        tilt = math.sqrt(measured_roll**2 + measured_pitch**2)
+        if tilt >= tilt_limit_rad:
+            return 0.0
+        scale = max(0.0, 1.0 - (tilt / tilt_limit_rad))
+        return float(target_vx * scale)
+
     def reset(self) -> None:
         self.filtered_attitude.fill(0.0)
+
 
 
 class MicroduckLocomotionEngine:

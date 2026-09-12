@@ -130,10 +130,14 @@ class WorldState:
         self.is_fallen: bool = False
         self.is_limp: bool = False
         self.forward_clearance_m: float = 2.0
+        self.tilt_deg: float = 0.0
+        self.is_near_fall: bool = False
 
     def update_orientation(self, roll: float, pitch: float) -> StateLevel:
         """Update stability from roll/pitch deviation."""
         deviation = math.sqrt(roll**2 + pitch**2)
+        self.tilt_deg = math.degrees(deviation)
+        self.is_near_fall = (self.tilt_deg > 25.0)
         # Higher deviation means lower stability metric
         stability_score = max(0.0, 1.0 - deviation)
         self.stability = self.stability_trigger.update(stability_score)
@@ -222,4 +226,6 @@ class WorldState:
             "is_fallen": self.is_fallen,
             "is_limp": self.is_limp,
             "forward_clearance_m": self.forward_clearance_m,
+            "tilt_deg": self.tilt_deg,
+            "is_near_fall": self.is_near_fall,
         }

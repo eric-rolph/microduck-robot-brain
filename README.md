@@ -238,15 +238,24 @@ To emulate 3D-printed horn play and gear backlash, `microduck_walk_backlash.xml`
 
 ### Local PPO training run
 
-Run a local PyTorch PPO training run on CPU or CUDA:
+Run a local PyTorch PPO training run on CPU or CUDA with push disturbance curriculum and terminal fall penalties:
 
 ```bash
-# Smoke test (5 iterations, 4 parallel environments)
-python -m microduck_brain.sim.train_smoke --iterations 5 --num-envs 4 --steps-per-env 64
+# Anti-fall training with push disturbance curriculum
+python -m microduck_brain.sim.train_smoke --iterations 5 --num-envs 4 --steps-per-env 64 --anti-fall
 
 # Export trained policy weights directly to ONNX
 python -m microduck_brain.sim.train_smoke --iterations 10 --export-onnx models/microduck_walk.onnx
 ```
+
+### Anti-fall training and balance recovery
+
+To eliminate falls during bipedal locomotion, the simulation applies:
+* Terminal fall penalty: Tipping over (> 38.7 deg tilt, < 0.080 m trunk height) or non-foot ground strikes incurs an immediate -50.0 penalty.
+* Upright survival bonus: Continuous +2.0 reward per step while upright.
+* Non-foot collision gating: Inspects contact pairs; contact between floor and trunk, head, neck, or knees triggers instant termination.
+* Push disturbance curriculum: Periodic horizontal impulse kicks (0.15 to 0.25 m/s) applied to the trunk teach active recovery stepping.
+* Proactive velocity attenuation: In DuckBrain, `compute_safe_velocity` throttles forward speed to zero as body tilt approaches 15 degrees, preventing pitching falls before balance is lost.
 
 ### End-to-end DuckBrain MuJoCo simulation
 
