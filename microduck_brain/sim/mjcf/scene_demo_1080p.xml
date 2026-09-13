@@ -1,80 +1,71 @@
-<mujoco model="microduck_demo_1080p">
-  <include file="robot_demo_beak.xml"/>
+<mujoco model="microduck_scene_demo_1080p">
+  <include file="robot_allcollisions_demo_beak.xml"/>
 
   <visual>
-    <global offwidth="1920" offheight="1080" azimuth="160" elevation="-20"/>
-    <headlight diffuse="0.85 0.85 0.85" ambient="0.4 0.4 0.4" specular="0.25 0.25 0.25"/>
-    <rgba haze="0.15 0.25 0.35 1"/>
-    <quality shadowsize="2048"/>
+    <headlight diffuse="0.85 0.85 0.88" ambient="0.35 0.35 0.38" specular="0.25 0.25 0.25"/>
+    <rgba haze="0.12 0.22 0.32 1"/>
+    <global azimuth="140" elevation="-18" offwidth="1920" offheight="1080"/>
   </visual>
 
   <asset>
-    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="1024"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.22 0.32 0.42" rgb2="0.12 0.22 0.32" markrgb="0.8 0.8 0.8" width="300" height="300"/>
-    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.25"/>
-    <material name="acrylic_glass" rgba="0.80 0.92 1.0 0.35" specular="0.9" shininess="0.8" reflectance="0.4"/>
-    <material name="acrylic_rim" rgba="0.75 0.88 0.98 0.50" specular="0.8" shininess="0.7" reflectance="0.3"/>
-    <material name="maze_wood" rgba="0.65 0.42 0.28 1.0" specular="0.2" shininess="0.2"/>
+    <texture type="skybox" builtin="gradient" rgb1="0.25 0.42 0.65" rgb2="0.05 0.08 0.15" width="512" height="1024"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.18 0.24 0.32" rgb2="0.12 0.16 0.22" markrgb="0.65 0.75 0.85" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="6 6" reflectance="0.15"/>
+    <material name="acrylic_glass" rgba="0.85 0.92 0.98 0.4" reflectance="0.5" specular="0.9" shininess="0.9"/>
+    <material name="acrylic_rim" rgba="0.75 0.88 0.98 0.65" reflectance="0.4" specular="0.8" shininess="0.8"/>
+    <material name="maze_wood" rgba="0.45 0.32 0.22 1" reflectance="0.1"/>
   </asset>
 
   <worldbody>
-    <light pos="0.5 0 3.5" dir="0 0 -1" directional="true"/>
+    <light pos="0.5 0.4 3.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane"/>
 
-    <!-- Low-profile desktop marker tray (only 4mm high) -->
-    <body name="marker_pad" pos="0.32 0.00 0.002">
-      <geom name="pad_geom" type="box" size="0.030 0.065 0.002" rgba="0.22 0.28 0.35 0.8" friction="1.5 0.01 0.001"/>
+    <!-- Prominent Red Rectangular 3D Obstacle with full rigid-body colliders -->
+    <body name="red_obstacle_box" pos="0.10 -0.12 0.035">
+      <geom name="red_box_geom" type="box" size="0.030 0.030 0.035" rgba="0.92 0.15 0.15 1.0" mass="0.5" friction="1.5 0.01 0.001" condim="4" contype="1" conaffinity="1"/>
+    </body>
+
+    <!-- Desktop marker tray (pickup location) -->
+    <body name="marker_pad" pos="0.22 0.06 0.025">
+      <geom name="pad_geom" type="box" size="0.030 0.065 0.025" rgba="0.22 0.28 0.35 0.9" friction="1.5 0.01 0.001" condim="4" contype="1" conaffinity="1"/>
     </body>
 
     <!-- Dry-erase marker resting horizontally on the desktop tray at pickup location -->
-    <body name="marker" pos="0.32 0.00 0.012">
+    <body name="marker" pos="0.22 0.06 0.058">
       <freejoint name="marker_free"/>
       <!-- Main white barrel (14mm diameter, 7.6cm length) -->
-      <geom name="marker_barrel" type="cylinder" size="0.007 0.038" pos="0 -0.01 0" quat="0.707107 0.707107 0 0" rgba="0.95 0.95 0.95 1" mass="0.012" condim="4" friction="1.8 0.01 0.001"/>
+      <geom name="marker_barrel" type="cylinder" size="0.007 0.038" pos="0 -0.01 0" quat="0.707107 0.707107 0 0" rgba="0.95 0.95 0.95 1" mass="0.012" condim="4" friction="1.8 0.01 0.001" contype="1" conaffinity="1"/>
       <!-- Bold blue marker cap -->
-      <geom name="marker_cap" type="cylinder" size="0.0078 0.018" pos="0 0.045 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.004" condim="4" friction="1.8 0.01 0.001"/>
+      <geom name="marker_cap" type="cylinder" size="0.0078 0.018" pos="0 0.045 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.004" condim="4" friction="1.8 0.01 0.001" contype="1" conaffinity="1"/>
       <!-- Blue branding stripe on barrel -->
-      <geom name="marker_stripe" type="cylinder" size="0.0072 0.010" pos="0 0.01 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.001" condim="4" friction="1.8 0.01 0.001"/>
+      <geom name="marker_stripe" type="cylinder" size="0.0072 0.010" pos="0 0.01 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.001" condim="4" friction="1.8 0.01 0.001" contype="1" conaffinity="1"/>
       <!-- Rear end plug -->
-      <geom name="marker_plug" type="cylinder" size="0.0068 0.005" pos="0 -0.052 0" quat="0.707107 0.707107 0 0" rgba="0.3 0.3 0.3 1" mass="0.001" condim="4" friction="1.8 0.01 0.001"/>
+      <geom name="marker_plug" type="cylinder" size="0.0068 0.005" pos="0 -0.052 0" quat="0.707107 0.707107 0 0" rgba="0.3 0.3 0.3 1" mass="0.001" condim="4" friction="1.8 0.01 0.001" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- Desktop Maze Obstacle 1: Left wall partition requiring rightward flank -->
-    <body name="maze_wall_1" pos="0.54 0.09 0.04">
-      <geom name="wall_1_geom" type="box" size="0.035 0.12 0.04" material="maze_wood" mass="2.0"/>
+    <!-- Desktop Maze Obstacle 1: Left wall partition -->
+    <body name="maze_wall_1" pos="0.30 0.24 0.04">
+      <geom name="wall_1_geom" type="box" size="0.035 0.08 0.04" material="maze_wood" mass="2.0" condim="4" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- Desktop Maze Obstacle 2: Right wall partition requiring leftward flank -->
-    <body name="maze_wall_2" pos="0.76 -0.09 0.04">
-      <geom name="wall_2_geom" type="box" size="0.035 0.12 0.04" material="maze_wood" mass="2.0"/>
+    <!-- Desktop Maze Obstacle 2: Right wall partition -->
+    <body name="maze_wall_2" pos="0.38 -0.08 0.04">
+      <geom name="wall_2_geom" type="box" size="0.035 0.08 0.04" material="maze_wood" mass="2.0" condim="4" contype="1" conaffinity="1"/>
     </body>
 
     <!-- Goal Receptacle: Shallow Transparent Acrylic Container -->
-    <body name="transparent_container" pos="1.05 0.00 0.0">
+    <body name="transparent_container" pos="0.18 0.33 0.00">
       <!-- Transparent base plate -->
-      <geom name="container_base" type="box" size="0.060 0.090 0.003" pos="0 0 0.003" material="acrylic_glass" friction="1.5 0.01 0.001"/>
+      <geom name="container_base" type="box" size="0.060 0.090 0.003" pos="0 0 0.003" material="acrylic_glass" friction="1.5 0.01 0.001" condim="4" contype="1" conaffinity="1"/>
       <!-- Low transparent perimeter rims (12mm high) -->
-      <geom name="container_rim_front" type="box" size="0.003 0.090 0.006" pos="0.060 0 0.009" material="acrylic_rim"/>
-      <geom name="container_rim_back"  type="box" size="0.003 0.090 0.006" pos="-0.060 0 0.009" material="acrylic_rim"/>
-      <geom name="container_rim_left"  type="box" size="0.060 0.003 0.006" pos="0 0.090 0.009" material="acrylic_rim"/>
-      <geom name="container_rim_right" type="box" size="0.060 0.003 0.006" pos="0 -0.090 0.009" material="acrylic_rim"/>
+      <geom name="container_rim_front" type="box" size="0.003 0.090 0.006" pos="0.060 0 0.009" material="acrylic_rim" condim="4" contype="1" conaffinity="1"/>
+      <geom name="container_rim_back"  type="box" size="0.003 0.090 0.006" pos="-0.060 0 0.009" material="acrylic_rim" condim="4" contype="1" conaffinity="1"/>
+      <geom name="container_rim_left"  type="box" size="0.060 0.003 0.006" pos="0 0.090 0.009" material="acrylic_rim" condim="4" contype="1" conaffinity="1"/>
+      <geom name="container_rim_right" type="box" size="0.060 0.003 0.006" pos="0 -0.090 0.009" material="acrylic_rim" condim="4" contype="1" conaffinity="1"/>
     </body>
   </worldbody>
 
   <equality>
     <weld name="beak_grasp" body1="beak_jaw" body2="marker" active="false"/>
   </equality>
-
-  <keyframe>
-    <key name="STAND2" qpos="
-      0 0 0.12 1 0 0 0
-      0 0 -0.08726646259971647 0 -0.457924 0 -0.004940 0 0.452984 0
-      0.3490658503988659 0 0.3490658503988659 0 0 0 0 0 0
-      0 0 0.08726646259971647 0 0.457924 0 0.004940 0 -0.452984 0
-      0.32 0.00 0.012 1 0 0 0"
-      ctrl="
-      0 -0.08726646259971647 -0.457924 -0.004940 0.452984
-      0.3490658503988659 0.3490658503988659 0 0
-      0 0.08726646259971647 0.457924 0.004940 -0.452984"/>
-  </keyframe>
 </mujoco>

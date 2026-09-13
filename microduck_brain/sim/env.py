@@ -103,10 +103,40 @@ class MicroduckMuJoCoEnv:
             elif g_name and any(k in g_name.lower() for k in ("foot", "sole", "ankle")):
                 self.foot_geom_ids.add(i)
 
+        # Collect all robot bodies (descendants of trunk_base)
+        robot_body_ids = {self.trunk_body_id}
+        for b in range(self.model.nbody):
+            curr = b
+            while curr > 0:
+                if curr == self.trunk_body_id:
+                    robot_body_ids.add(b)
+                    break
+                curr = self.model.body_parentid[curr]
+
+        self.robot_body_ids = robot_body_ids
+
+        # Classify mouth / jaw geoms for intentional ground retrieval contact
+        mouth_body_names = {"jaw_soft", "beak_jaw", "beak_lower"}
+        mouth_body_ids = {
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            for name in mouth_body_names
+            if mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name) >= 0
+        }
+        self.mouth_geom_ids = set()
+        for i in range(self.model.ngeom):
+            b_id = self.model.geom_bodyid[i]
+            g_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, i)
+            if b_id in mouth_body_ids or (g_name and any(k in g_name.lower() for k in ("beak", "jaw", "mouth"))):
+                self.mouth_geom_ids.add(i)
+
+        # Only robot bodies that are neither floor, feet, nor world obstacles
         self.non_foot_geom_ids = {
             i for i in range(self.model.ngeom)
-            if i != self.floor_geom_id and i not in self.foot_geom_ids
+            if self.model.geom_bodyid[i] in self.robot_body_ids
+            and i != self.floor_geom_id
+            and i not in self.foot_geom_ids
         }
+        self.allow_mouth_contact = False
         self.fall_penalty = 50.0
 
 
@@ -212,15 +242,19 @@ class MicroduckMuJoCoEnv:
         return self.get_observation()
 
     def check_non_foot_ground_collision(self) -> bool:
-        """Returns True if any non-foot body collides with the ground floor."""
+        """Returns True if any non-foot robot body collides with the ground floor."""
         for i in range(self.data.ncon):
             c = self.data.contact[i]
             g1, g2 = c.geom1, c.geom2
             if g1 == self.floor_geom_id:
                 if g2 in self.non_foot_geom_ids:
+                    if self.allow_mouth_contact and g2 in self.mouth_geom_ids:
+                        continue
                     return True
             elif g2 == self.floor_geom_id:
                 if g1 in self.non_foot_geom_ids:
+                    if self.allow_mouth_contact and g1 in self.mouth_geom_ids:
+                        continue
                     return True
         return False
 
