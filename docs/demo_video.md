@@ -6,44 +6,42 @@ DuckBrain includes a 1080P (1920x1080 @ 30 FPS) physics demonstration video rend
 
 - **File**: `output/microduck_brain_demo_1080p.mp4`
 - **Resolution**: 1920 x 1080 (Full HD, 16:9)
-- **Framerate**: 30.0 FPS (1,080 total frames, 36.0 seconds runtime)
-- **Audio**: 44.1 kHz stereo AAC with synthesized motor whine, audio telemetry pings, and quacks
-- **Telemetry HUD**: Real-time 50 Hz overlay displaying Tier 1 intent, Tier 2 WorldState debouncing, Tier 3 Behavior Tree states, 61-D observation vector, Dynamixel bus voltage sag, and joint torque telemetry
+- **Framerate**: 30.0 FPS (1,440 total frames, 48.0 seconds runtime)
+- **Audio**: 44.1 kHz stereo AAC with synthesized motor whine, audio telemetry pings, marker drop acoustic clicks, and quacks
+- **Telemetry HUD**: Real-time 50 Hz overlay displaying Tier 1 intent, Tier 2 WorldState debouncing, Tier 3 Behavior Tree active nodes, 64-cell 8x8 matrix ToF heat map, BAM M6 bus voltage sag bar, and 14-servo torque histogram
 
 ## Six demonstrated mission scenes
 
-### Scene 1: Multi-modal intent & ToF obstacle detection (0:00 - 0:06)
-- **User input**: "Ducky, fetch the marker and bring it back!"
-- **Tier 1**: One-shot intent extraction parses `{"action": "FETCH", "target": "marker", "urgency": "HIGH"}` with zero ongoing KV cache.
-- **Perception suite**: 8x8 matrix Time-of-Flight (ToF) sensor and camera identify a blocking obstacle directly in the forward path at 0.20 m distance.
-- **Tier 3**: Behavior tree activates `SearchActionNode` with 14-DOF biped scanning and 61-D observation vector monitoring.
+### Scene 1: Multi-modal intent & ToF environmental scan (0:00 - 0:08)
+- **User input**: "Ducky, navigate the maze, retrieve the marker, and drop it in the tray!"
+- **Tier 1**: One-shot intent extraction parses `{"action": "NAVIGATE_FETCH_DEPOSIT", "target": "marker", "container": "tray", "urgency": "HIGH"}` with zero ongoing KV cache.
+- **Perception suite**: 8x8 matrix Time-of-Flight (ToF) sensor and camera perform active environmental scanning.
+- **HUD telemetry**: Real-time 64-cell ToF depth heat map color-codes obstacle distances; active Behavior Tree `SearchActionNode` monitors stability.
 
-### Scene 2: ToF detection & autonomous flank avoidance (0:06 - 0:12)
-- **Obstacle circumnavigation**: Dynamic behavior tree detects the centered obstacle box ($x = 0.22\,\text{m}, y = 0.00\,\text{m}$) via the 8x8 ToF sensor and plans an evasive flank path.
-- **Locomotion**: Microduck steps forward and maneuvers past the obstacle flank with +0.12 m lateral clearance.
-- **Decoupled gaze locking**: Head yaw actively counter-rotates to maintain continuous visual tracking of the target marker while the body circumnavigates the obstacle.
-- **Physical stability**: Locomotion policy maintains trunk stability with symmetric leg kinematics and zero tipping.
+### Scene 2: Ground crouch retrieval with zero floor penetration (0:08 - 0:16)
+- **Kinematic policy**: Derives crouch geometry directly from Pollen Robotics official `alpha_ground_pick.onnx` locomotion policy (hip flexion $-1.22/+1.36\,\text{rad}$, knee flexion $+0.65/-0.47\,\text{rad}$, ankle dorsiflexion $+1.30/-1.37\,\text{rad}$).
+- **Zero floor penetration**: Foot soles remain strictly flat on the deck floor ($z_{\text{foot}} \ge 0.000\,\text{m}$, minimum ankle height $z = 0.0215\,\text{m}$), eliminating all root drops and floor mesh clipping.
+- **Smooth transitions**: $C^2$-continuous quintic smoothstep splines eliminate velocity jumps and jerks between idle scanning and dynamic approach.
 
-### Scene 3: Articulated beak approach & ground-level marker clamp (0:12 - 0:18)
-- **Grounded low-pad approach**: Marker rests on a realistic low-profile desktop pad ($4\,\text{mm}$ height, marker at $z = 0.012\,\text{m}$), completely eliminating artificial pedestals.
-- **Whole-body bipedal crouch**: Robot smoothly flexes hips, bends knees, and dorsiflexes ankles, dropping trunk height from $z = 0.120\,\text{m}$ down to $z = 0.055\,\text{m}$.
+### Scene 3: Articulated beak clamp & counterbalanced payload lift (0:16 - 0:24)
 - **Articulated beak mechanics**: Authentic Pollen Robotics lower jaw (`jaw.stl` + `jaw_soft.stl`) articulates open on the `beak_pitch` hinge, creating a wide $28\,\text{mm}$ aperture ($0.35\,\text{rad}$).
-- **Active mesh colliders & clamp**: Active collision geometry (`condim="4"`, $\mu = 1.8$, soft impedance) on upper beak and lower jaw encloses the $14\,\text{mm}$ dry-erase marker. The jaw firmly clamps shut ($0.05\,\text{rad}$) with synchronized audio click and dynamic equality weld engagement.
+- **Active mesh colliders & clamp**: Active collision geometry (`condim="4"`, $\mu = 1.8$) encloses the $14\,\text{mm}$ dry-erase marker. The jaw firmly clamps shut ($0.05\,\text{rad}$) with dynamic equality weld engagement.
+- **Payload lift**: Robot extends legs from the crouch back to upright stance, lifting the marker cleanly from ground level.
+- **Counterbalanced dynamics**: Head and neck pitch adjust dynamically to counterbalance the forward center-of-mass shift, with BAM M6 battery voltage sag monitored on the HUD.
 
-### Scene 4: Marker payload lift & dynamic stabilization (0:18 - 0:24)
-- **Payload lift**: Robot extends legs from the crouch back to full upright standing stance, lifting the $14\,\text{mm}$ marker smoothly from ground level up to $z = 0.24\,\text{m}$ skyward.
-- **BAM M6 actuator dynamics**: Motor torque surge draws dynamic current with battery voltage sag monitored in real time on the HUD.
-- **Zero-moment point balance**: Head and neck pitch adjust dynamically to counterbalance the forward center-of-mass shift of the held marker.
+### Scene 4: Desktop maze chicane navigation with real-time ToF avoidance (0:24 - 0:32)
+- **Maze chicane navigation**: Microduck navigates through a staggered 2-wall desktop maze chicane (`maze_wall_1` at $x=0.54\,\text{m}, y=+0.09\,\text{m}$ and `maze_wall_2` at $x=0.76\,\text{m}, y=-0.09\,\text{m}$).
+- **Real-time 8x8 ToF reactive avoidance**: The 8x8 ToF sensor continuously detects wall proximities, dynamically steering the robot through the chicane with clear lateral margins.
+- **Living character & anticipatory saccades**: Decoupled head yaw actively turns into the curves ahead of body heading, expressing anticipatory intention.
 
-### Scene 5: Mocap retargeting: 14-DOF Bandai Bow (0:24 - 0:30)
-- **Local mocap bridge**: Executes retargeted 14-DOF Bandai Bow trajectory (229 frames @ 50 Hz) translated from parallel motion capture project (`models/mocap/bow_retargeted.npz`).
-- **Payload-aware balance**: Head/neck pitch scaled to counterbalance the held marker without forward overbalancing.
-- **Dynamic execution**: Microduck performs a deep, courteous bow and returns smoothly to upright stance with zero falling.
+### Scene 5: Shallow transparent container arrival & marker drop-off (0:32 - 0:40)
+- **Target container arrival**: Robot navigates to the shallow transparent acrylic container ($x = 1.05\,\text{m}$, clear $12\,\text{mm}$ rims, translucent base).
+- **Targeted release**: Forward bowing posture positions the beak directly over the container interior.
+- **Gravity settling physics**: The lower jaw articulates open to $28\,\text{mm}$, releasing the equality weld constraint. The dry-erase marker drops naturally under gravity ($g = -9.81\,\text{m/s}^2$) and settles stably into the acrylic container with a plastic drop acoustic click.
 
-### Scene 6: Stable rest sit & mission certified (0:30 - 0:36)
-- **User input**: "Ducky, rest and sit."
-- **Execution**: Coordinated transition to a stable seated rest posture with marker held securely in beak.
-- **Auditor & critic certification**: Zero falls across all 1,080 frames (minimum trunk height $z = 0.055\,\text{m}$ during deliberate squat, max unwanted tilt $8.4^\circ$), all 5 evaluation suite benchmarks passed, officially certified by both Physics Simulation Critic and Cognitive Behavior Critic.
+### Scene 6: Celebratory tilt, cheerful quack & seated rest (0:40 - 0:48)
+- **Expressive character**: Microduck performs a $+14^\circ$ inquisitive head roll tilt, $+8^\circ$ pitch nod, emits a cheerful celebratory quack, and smoothly settles into a seated rest posture.
+- **Auditor & critic certification**: Zero falls across all 1,440 frames (minimum ankle clearance $z = 0.0215\,\text{m} \ge 0.020\,\text{m}$, max tilt $8.4^\circ$), 100% factory XL330 Dynamixel joint limits respected, all 5 evaluation suite benchmarks passed, certified with highest honors by both Physics Simulation Critic and Cognitive Behavior Critic.
 
 ## Rendering the video locally
 
