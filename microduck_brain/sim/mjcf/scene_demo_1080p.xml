@@ -18,51 +18,33 @@
     <light pos="0 0 3.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane"/>
 
-    <!-- Desktop pen cradle / stand for the dry-erase marker -->
-    <body name="cradle" pos="0.16 0.02 0.105">
-      <geom name="cradle_base" type="box" size="0.035 0.055 0.105" rgba="0.22 0.28 0.35 1"/>
+    <!-- Low-profile desktop marker tray (only 4mm high) -->
+    <body name="marker_pad" pos="0.48 0.00 0.002">
+      <geom name="pad_geom" type="box" size="0.030 0.065 0.002" rgba="0.22 0.28 0.35 0.8" friction="1.5 0.01 0.001"/>
     </body>
 
-    <!-- Dry-erase marker resting horizontally across the pen cradle -->
-    <body name="marker" pos="0.16 0.02 0.218">
+    <!-- Dry-erase marker resting horizontally on the desktop tray -->
+    <body name="marker" pos="0.48 0.00 0.012">
       <freejoint name="marker_free"/>
       <!-- Main white barrel (14mm diameter, 7.6cm length) -->
-      <geom name="marker_barrel" type="cylinder" size="0.007 0.038" pos="0 -0.01 0" quat="0.707107 0.707107 0 0" rgba="0.95 0.95 0.95 1" mass="0.012"/>
+      <geom name="marker_barrel" type="cylinder" size="0.007 0.038" pos="0 -0.01 0" quat="0.707107 0.707107 0 0" rgba="0.95 0.95 0.95 1" mass="0.012" condim="4" friction="1.8 0.01 0.001"/>
       <!-- Bold blue marker cap -->
-      <geom name="marker_cap" type="cylinder" size="0.0078 0.018" pos="0 0.045 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.004"/>
+      <geom name="marker_cap" type="cylinder" size="0.0078 0.018" pos="0 0.045 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.004" condim="4" friction="1.8 0.01 0.001"/>
       <!-- Blue branding stripe on barrel -->
-      <geom name="marker_stripe" type="cylinder" size="0.0072 0.010" pos="0 0.01 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.001"/>
+      <geom name="marker_stripe" type="cylinder" size="0.0072 0.010" pos="0 0.01 0" quat="0.707107 0.707107 0 0" rgba="0.1 0.35 0.92 1" mass="0.001" condim="4" friction="1.8 0.01 0.001"/>
       <!-- Rear end plug -->
-      <geom name="marker_plug" type="cylinder" size="0.0068 0.005" pos="0 -0.052 0" quat="0.707107 0.707107 0 0" rgba="0.3 0.3 0.3 1" mass="0.001"/>
+      <geom name="marker_plug" type="cylinder" size="0.0068 0.005" pos="0 -0.052 0" quat="0.707107 0.707107 0 0" rgba="0.3 0.3 0.3 1" mass="0.001" condim="4" friction="1.8 0.01 0.001"/>
     </body>
 
     <!-- Rough terrain section: low-profile obstacles -->
-    <geom name="bump1" type="capsule" fromto="0.55 -0.35 0.005 0.55 0.35 0.005" size="0.008" rgba="0.35 0.42 0.5 1" friction="1.5 0.005 0.0001"/>
-    <geom name="bump2" type="capsule" fromto="0.75 -0.35 0.009 0.75 0.35 0.009" size="0.012" rgba="0.35 0.42 0.5 1" friction="1.5 0.005 0.0001"/>
-    <geom name="bump3" type="capsule" fromto="0.95 -0.35 0.007 0.95 0.35 0.007" size="0.010" rgba="0.35 0.42 0.5 1" friction="1.5 0.005 0.0001"/>
+    <geom name="bump1" type="capsule" fromto="0.75 -0.35 0.005 0.75 0.35 0.005" size="0.008" rgba="0.35 0.42 0.5 1" friction="1.5 0.005 0.0001"/>
+    <geom name="bump2" type="capsule" fromto="0.95 -0.35 0.009 0.95 0.35 0.009" size="0.012" rgba="0.35 0.42 0.5 1" friction="1.5 0.005 0.0001"/>
 
-    <!-- Navigation obstacle box requiring autonomous flank circumnavigation -->
-    <body name="obstacle_box" pos="0.08 -0.12 0.04">
+    <!-- Navigation obstacle box centered on direct forward path to require autonomous circumnavigation -->
+    <body name="obstacle_box" pos="0.22 0.00 0.04">
       <geom name="obstacle_geom" type="box" size="0.03 0.04 0.04" rgba="0.9 0.22 0.2 0.95" mass="1.5"/>
     </body>
   </worldbody>
-
-  <contact>
-    <exclude body1="cradle" body2="ankle_left"/>
-    <exclude body1="cradle" body2="ankle_right"/>
-    <exclude body1="cradle" body2="leg"/>
-    <exclude body1="cradle" body2="leg_2"/>
-    <exclude body1="cradle" body2="upper_leg_left"/>
-    <exclude body1="cradle" body2="upper_leg_right"/>
-    <exclude body1="marker" body2="ankle_left"/>
-    <exclude body1="marker" body2="ankle_right"/>
-    <exclude body1="marker" body2="leg"/>
-    <exclude body1="marker" body2="leg_2"/>
-    <exclude body1="marker" body2="upper_leg_left"/>
-    <exclude body1="marker" body2="upper_leg_right"/>
-    <exclude body1="obstacle_box" body2="ankle_left"/>
-    <exclude body1="obstacle_box" body2="ankle_right"/>
-  </contact>
 
   <equality>
     <weld name="beak_grasp" body1="beak_jaw" body2="marker" active="false"/>
@@ -74,14 +56,14 @@
       0 0 0 0 0 0 0 0 0 0
       0 0 0 0 0 0 0 0 0
       0 0 0 0 0 0 0 0 0 0
-      0.16 0.02 0.218 1 0 0 0"
+      0.48 0.00 0.012 1 0 0 0"
       ctrl="0 0 0 0 0 0 0 0 0 0 0 0 0 0"/>
     <key name="STAND" qpos="
       0 0 0.12 1 0 0 0
       0 0 -0.08726646259971647 0 -0.457924 0 -0.004940 0 0.452984 0
       0.3490658503988659 0 0.3490658503988659 0 0 0 0 0 0
       0 0 0.08726646259971647 0 0.457924 0 0.004940 0 -0.452984 0
-      0.16 0.02 0.218 1 0 0 0"
+      0.48 0.00 0.012 1 0 0 0"
       ctrl="
       0 -0.08726646259971647 -0.457924 -0.004940 0.452984
       0.3490658503988659 0.3490658503988659 0 0
@@ -91,7 +73,7 @@
       0 0 -0.08726646259971647 0 -0.457924 0 -0.004940 0 0.452984 0
       0.3490658503988659 0 0.3490658503988659 0 0 0 0 0 0
       0 0 0.08726646259971647 0 0.457924 0 0.004940 0 -0.452984 0
-      0.16 0.02 0.218 1 0 0 0"
+      0.48 0.00 0.012 1 0 0 0"
       ctrl="
       0 -0.08726646259971647 -0.457924 -0.004940 0.452984
       0.3490658503988659 0.3490658503988659 0 0

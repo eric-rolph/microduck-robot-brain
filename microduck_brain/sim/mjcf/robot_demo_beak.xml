@@ -247,6 +247,7 @@
                   <joint name="beak_pitch" type="hinge" axis="1 0 0" range="-0.05 0.5" damping="0.05"/>
                   <geom type="mesh" class="visual" pos="0 -0.015 -0.015" mesh="jaw" material="jaw_material"/>
                   <geom type="mesh" class="visual" pos="-0.0001 -0.015 -0.015" mesh="jaw_soft" material="jaw_soft_material"/>
+                  <geom type="mesh" class="collision" name="beak_lower_collision" pos="-0.0001 -0.015 -0.015" mesh="jaw_soft" condim="4" friction="1.8 0.02 0.001" solref="0.004 1" solimp="0.95 0.99 0.001 0.5 2"/>
                 </body>
               </body>
               <!-- Part motor_support -->
@@ -261,6 +262,7 @@
               <geom type="mesh" class="visual" pos="0.02694 0.0289936 -0.0519" quat="0.707107 0 -0 -0.707107" mesh="elec_rpi_robot_hat_pcb" material="elec_rpi_robot_hat_pcb_material"/>
               <!-- Part soft_mouth_top -->
               <geom type="mesh" class="visual" pos="-0.00420071 1.7776e-08 -0.0180814" quat="0.5 0.5 0.5 0.5" mesh="soft_mouth_top" material="soft_mouth_top_material"/>
+              <geom type="mesh" class="collision" name="beak_upper_collision" pos="-0.00420071 1.7776e-08 -0.0180814" quat="0.5 0.5 0.5 0.5" mesh="soft_mouth_top" condim="4" friction="1.8 0.02 0.001" solref="0.004 1" solimp="0.95 0.99 0.001 0.5 2"/>
               <!-- Part noenoeil -->
               <geom type="mesh" class="visual" pos="-0.0045 -9.13778e-05 -0.0178" quat="0.5 0.5 0.5 0.5" mesh="noenoeil" material="noenoeil_material"/>
               <!-- Part bottom_head_shell -->

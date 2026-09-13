@@ -18,23 +18,14 @@ import wave
 import cv2
 import mujoco
 import numpy as np
-import onnxruntime as ort
 from PIL import Image, ImageDraw, ImageFont
 
 # Ensure repository root is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from microduck_brain.behavior_tree import (
-    BehaviorNode,
-    Blackboard,
-    SequenceNode,
-)
-from microduck_brain.skill_latch import SkillStatus
 from microduck_brain.sim.bam_actuator import BamM6ActuatorModel, BamM6Config
 from microduck_brain.sim.backlash import BacklashManager
 from microduck_brain.sim.env import DEFAULT_POSE, quat_rotate_inverse
-from microduck_brain.world_state import WorldState
-from microduck_brain.locomotion_engine import MicroduckLocomotionEngine
 from microduck_brain.mocap_engine import MocapClip, MocapPlayer
 
 # Video configuration
@@ -69,21 +60,21 @@ SCENE_NARRATION = [
     },
     {
         "scene": 1,
-        "title": "TIER 2 & 3: TOF DETECTION & FLANK AVOIDANCE",
+        "title": "TIER 2 & 3: TOF DETECTION & FLANK CIRCUMNAVIGATION",
         "start": 6.5,
         "text": "Autonomous obstacle avoidance. The Time-of-Flight sensor detects a blocking obstacle at 20 centimeters. The Behavior Tree circumnavigates around the flank with active steering.",
     },
     {
         "scene": 2,
-        "title": "TIER 3 & 4: ARTICULATED BEAK CLAMP & MARKER GRASP",
+        "title": "TIER 3 & 4: GROUND CROUCH & MARKER RETRIEVAL",
         "start": 12.5,
-        "text": "Physical marker grasp. Approaching the pen stand, Microduck's articulated lower beak opens 25 millimeters wide, aligns with the dry-erase marker barrel, and clamps firmly shut.",
+        "text": "Low ground retrieval. Microduck executes a center of mass balanced squat, lowering trunk height to reach the desktop pad, opening its articulated beak around the marker barrel.",
     },
     {
         "scene": 3,
-        "title": "DYNAMIC STABILITY UNDER CARRIED PAYLOAD",
+        "title": "TIER 3 & 4: ARTICULATED CLAMP & PAYLOAD LIFT",
         "start": 18.5,
-        "text": "Dynamic payload lift. Rising to full stance, the biped lifts the marker skyward. BAM M6 motor dynamics and posture balance compensation maintain zero-moment point equilibrium.",
+        "text": "Articulated beak clamp and payload lift. The lower jaw closes firmly around the marker. Rising to full stance, the biped lifts the marker skyward with posture balance compensation.",
     },
     {
         "scene": 4,
@@ -95,7 +86,7 @@ SCENE_NARRATION = [
         "scene": 5,
         "title": "MISSION COMPLETE: REAL PROBLEM SOLVING",
         "start": 30.5,
-        "text": "Mission complete. Obstacle circumnavigated, marker retrieved with articulated beak clamp, mocap bow executed, and zero falls across all real-task benchmark criteria.",
+        "text": "Mission complete. Obstacle circumnavigated, ground marker retrieved with articulated beak clamp, mocap bow executed, and zero falls across all real-task benchmark criteria.",
     },
 ]
 
@@ -126,23 +117,23 @@ def generate_audio_track() -> Path:
         audio[idx : idx + blip_samples, 0] += blip
         audio[idx : idx + blip_samples, 1] += blip
 
-    # 3. Servo sound on beak opening (t = 12.8s)
-    idx_servo = int(12.8 * sr)
-    dur_servo = int(0.70 * sr)
-    t_s = np.linspace(0, 0.70, dur_servo, endpoint=False)
-    servo_whine = 0.06 * np.sin(2 * np.pi * (800 + 400 * t_s) * t_s) * np.sin(np.pi * t_s / 0.70)
+    # 3. Servo sound on beak opening (t = 12.6s)
+    idx_servo = int(12.6 * sr)
+    dur_servo = int(0.60 * sr)
+    t_s = np.linspace(0, 0.60, dur_servo, endpoint=False)
+    servo_whine = 0.06 * np.sin(2 * np.pi * (800 + 400 * t_s) * t_s) * np.sin(np.pi * t_s / 0.60)
     audio[idx_servo : idx_servo + dur_servo, 0] += servo_whine
     audio[idx_servo : idx_servo + dur_servo, 1] += servo_whine
 
-    # 4. Snap / click sound on beak clamp around marker (t = 16.8s)
-    idx_click = int(16.8 * sr)
+    # 4. Snap / click sound on beak clamp around marker (t = 18.8s)
+    idx_click = int(18.8 * sr)
     dur_click = int(0.08 * sr)
     t_c = np.linspace(0, 0.08, dur_click, endpoint=False)
     click = 0.22 * np.sin(2 * np.pi * 2800 * t_c) * np.exp(-120 * t_c)
     audio[idx_click : idx_click + dur_click, 0] += click
     audio[idx_click : idx_click + dur_click, 1] += click
 
-    # 3. SAPI voice synthesis
+    # 5. SAPI voice synthesis
     voice = win32com.client.Dispatch("SAPI.SpVoice")
     stream = win32com.client.Dispatch("SAPI.SpFileStream")
     for v in voice.GetVoices():
@@ -214,7 +205,6 @@ def draw_hud_card(
 ) -> None:
     """Draw futuristic sci-fi telemetry HUD card with corner brackets."""
     draw.rectangle([(x, y), (x + w, y + h)], fill=fill_color)
-    # Corner brackets
     th = 2
     # Top-Left
     draw.line([(x, y), (x + corner_len, y)], fill=border_color, width=th)
@@ -261,10 +251,10 @@ def render_hud_overlay(
     draw_hud_card(draw, 32, 105, card_w, card_h, border_color=(0, 240, 255, 220))
     draw.text((45, 115), "TIER 1: STATELESS INTENT", font=FONT_CONSOLAS_BOLD_24, fill=(0, 240, 255, 255))
 
-    intent_text = sim_data.get("intent_text", '"Ducky, bring me the ball."')
+    intent_text = sim_data.get("intent_text", '"Ducky, fetch the marker from the ground!"')
     draw.text((45, 148), f"PROMPT: {intent_text}", font=FONT_CONSOLAS_14, fill=(255, 255, 255, 220))
 
-    parsed_json = sim_data.get("parsed_json", '{"action": "FETCH", "target": "ball"}')
+    parsed_json = sim_data.get("parsed_json", '{"action": "FETCH", "target": "marker"}')
     draw.text((45, 175), f"GOAL:   {parsed_json}", font=FONT_CONSOLAS_18, fill=(255, 220, 50, 255))
     draw.text((45, 215), "LATENCY: 12 ms (one-shot exit, KV cache = 0)", font=FONT_CONSOLAS_14, fill=(160, 220, 180, 200))
 
@@ -339,7 +329,7 @@ def render_hud_overlay(
 
     ny = 150
     for name, status in nodes:
-        s_c = (50, 255, 150, 255) if status in ("SUCCESS", "ACTIVE", "COMPLETE", "RETRIEVED", "LOCKED (GRASP)", "HOLDING MARKER") else (0, 240, 255, 255) if "RUNNING" in status or "CLAMP" in status or "OPEN" in status else (255, 80, 80, 255) if status == "GATED" else (120, 130, 140, 200)
+        s_c = (50, 255, 150, 255) if status in ("SUCCESS", "ACTIVE", "COMPLETE", "RETRIEVED", "LOCKED (GRASP)", "HOLDING MARKER", "CLAMPED & LIFTED") else (0, 240, 255, 255) if "RUNNING" in status or "CLAMP" in status or "OPEN" in status or "CROUCH" in status or "ACTIVE" in status else (255, 80, 80, 255) if status == "GATED" else (120, 130, 140, 200)
         draw.text((WIDTH - bt_w - 20, ny), f"▶ {name[:18]:<18}", font=FONT_CONSOLAS_14, fill=(220, 230, 240, 220))
         draw.rectangle([(WIDTH - 195, ny - 2), (WIDTH - 45, ny + 16)], fill=(20, 30, 45, 230), outline=s_c)
         draw.text((WIDTH - 190, ny), f"[{status[:16]}]", font=FONT_CONSOLAS_14, fill=s_c)
@@ -382,10 +372,10 @@ def render_hud_overlay(
 
     # 8. Bottom Center: Dynamic Verification Banner per Scene
     scene_banners = [
-        "TIER 1: MULTI-MODAL PERCEPTION // TOF 0.20m OBSTACLE DETECTED",
+        "TIER 1: MULTI-MODAL PERCEPTION // TOF 0.22m OBSTACLE DETECTED",
         "TIER 2 & 3: AUTONOMOUS FLANK CIRCUMNAVIGATION // CLEARANCE +0.12m",
-        "TIER 3 & 4: ARTICULATED BEAK CLAMP // MOUTH OPEN [25mm] -> CLAMP [14mm]",
-        "DYNAMIC STABILIZATION // 18g MARKER LIFTED // ZMP BALANCED",
+        "TIER 3 & 4: LOW GROUND RETRIEVAL // CROUCH SQUAT [55mm] -> BEAK OPEN [28mm]",
+        "DYNAMIC STABILIZATION // 14mm MARKER CLAMPED & LIFTED // ZMP BALANCED",
         "MOCAP RETARGETING // 14-DOF COURTEOUS BOW // LOCAL MOTION LAB",
         "MISSION SUCCESS // ALL REAL-TASK PROBLEMS SOLVED // ZERO FALLS",
     ]
@@ -419,9 +409,6 @@ def build_and_render_video() -> None:
     # Actuator & backlash managers
     backlash_mgr = BacklashManager(model)
     bam = BamM6ActuatorModel(num_actuators=model.nu, config=BamM6Config(stall_torque=0.96))
-
-    # Locomotion engine for autonomous flank navigation
-    loco = MicroduckLocomotionEngine(str(Path(__file__).parent.parent / "models" / "alpha_walking.onnx"))
 
     # Load retargeted mocap clip from local motion lab with payload balance intent scaling
     mocap_path = Path(__file__).parent.parent / "models" / "mocap" / "bow_retargeted.npz"
@@ -457,20 +444,31 @@ def build_and_render_video() -> None:
         mujoco.mj_step(model, data)
     bam.reset(initial_targets=DEFAULT_POSE[: model.nu])
 
+    # Initial marker pose directly on marker_pad
+    data.qpos[marker_qposadr : marker_qposadr + 3] = [0.48, 0.0, 0.012]
+    data.qpos[marker_qposadr + 3 : marker_qposadr + 7] = [1.0, 0.0, 0.0, 0.0]
+    data.qvel[:] = 0.0
+    mujoco.mj_forward(model, data)
+
+    # Relative transformation for marker grasp
+    rel_pos_clamped = np.zeros(3)
+    rel_quat_clamped = np.array([1.0, 0.0, 0.0, 0.0])
+    weld_active = False
+
     # Camera presets for the 6 scenes
     CAM_PRESETS = [
-        # Scene 0: Intent & ToF Obstacle Detection (front 3/4 perspective of duck + obstacle + pen stand)
+        # Scene 0: Intent & ToF Obstacle Detection (front 3/4 perspective)
         {"dist": 0.78, "elev": -14.0, "azim": 145.0},
         # Scene 1: Autonomous Obstacle Avoidance & Flank Bypass (tracking side view)
-        {"dist": 0.82, "elev": -16.0, "azim": 135.0},
-        # Scene 2: Approach & Physical Beak Grasp (macro close-up beak dip and clamp at pen stand)
-        {"dist": 0.32, "elev": -5.0, "azim": 72.0},
-        # Scene 3: Payload Lift & Balance under Carried Load (standing hero profile)
-        {"dist": 0.45, "elev": -8.0, "azim": 75.0},
+        {"dist": 0.85, "elev": -18.0, "azim": 130.0},
+        # Scene 2: Ground Crouch & Marker Approach (low ground profile)
+        {"dist": 0.38, "elev": -8.0, "azim": 75.0, "lookat": [0.47, 0.0, 0.04]},
+        # Scene 3: Articulated Beak Clamp & Payload Lift (macro close-up to hero lift)
+        {"dist": 0.36, "elev": -6.0, "azim": 75.0, "lookat": [0.47, 0.0, 0.04]},
         # Scene 4: Mocap Retargeting: 14-DOF Bandai Bow Execution (full body view)
-        {"dist": 0.68, "elev": -12.0, "azim": 110.0},
-        # Scene 5: Mission Success & Multi-Tier Sensor Certification (elevated celebration view)
-        {"dist": 0.72, "elev": -14.0, "azim": 120.0},
+        {"dist": 0.68, "elev": -12.0, "azim": 110.0, "lookat": [0.44, 0.0, 0.12]},
+        # Scene 5: Mission Success & Multi-Tier Sensor Certification (celebration view)
+        {"dist": 0.72, "elev": -14.0, "azim": 120.0, "lookat": [0.44, 0.0, 0.10]},
     ]
 
     # Spawn FFmpeg child process
@@ -500,41 +498,42 @@ def build_and_render_video() -> None:
     t_render_start = time.perf_counter()
     print("Beginning 1080P simulation and rendering loop...")
 
-    weld_active = False
-
     for f in range(TOTAL_FRAMES):
         t_sec = f / float(FPS)
         scene_idx = min(5, int(t_sec / 6.0))
         scene_prog = (t_sec % 6.0) / 6.0
 
-        # Camera interpolation tracking robot trunk
-        trunk_pos = data.xpos[trunk_id]
-        if scene_idx == 2:
-            # Macro close-up on head and beak grasping marker
-            camera.distance = 0.32
-            camera.elevation = -5.0
-            camera.azimuth = 72.0 + math.sin(t_sec * 0.4) * 2.0
-            camera.lookat[:] = [0.14, 0.02, 0.21]
-        elif scene_idx == 3:
-            # Dynamic payload lift view
-            camera.distance = 0.45
-            camera.elevation = -8.0
-            camera.azimuth = 75.0 + math.sin(t_sec * 0.4) * 2.0
-            camera.lookat[:] = [0.13, 0.02, 0.22]
+        # Camera choreography
+        cam_cfg = CAM_PRESETS[scene_idx]
+        if scene_idx == 3:
+            # Dynamic camera transition from macro clamp to hero lift
+            p_cam = min(1.0, max(0.0, (scene_prog - 0.20) / 0.55))
+            p_cam_s = 10 * p_cam**3 - 15 * p_cam**4 + 6 * p_cam**5
+            camera.distance = 0.36 + (0.50 - 0.36) * p_cam_s
+            camera.elevation = -6.0 + (-10.0 - (-6.0)) * p_cam_s
+            camera.azimuth = 75.0 + (65.0 - 75.0) * p_cam_s
+            camera.lookat[:] = [
+                0.47 + (0.44 - 0.47) * p_cam_s,
+                0.0,
+                0.04 + (0.16 - 0.04) * p_cam_s,
+            ]
         else:
-            cam_cfg = CAM_PRESETS[scene_idx]
             camera.distance = cam_cfg["dist"]
             camera.elevation = cam_cfg["elev"]
-            camera.azimuth = cam_cfg["azim"] + math.sin(t_sec * 0.5) * 3.0
-            camera.lookat[:] = [trunk_pos[0], trunk_pos[1], trunk_pos[2] + 0.04]
+            camera.azimuth = cam_cfg["azim"] + math.sin(t_sec * 0.4) * 2.0
+            if "lookat" in cam_cfg:
+                camera.lookat[:] = cam_cfg["lookat"]
+            else:
+                trunk_pos = data.xpos[trunk_id]
+                camera.lookat[:] = [trunk_pos[0], trunk_pos[1], trunk_pos[2] + 0.04]
 
         # Scene specific behaviors and brain states
         sim_data = {}
         target_positions = DEFAULT_POSE[: model.nu].copy()
 
         if scene_idx == 0:
-            # Scene 1: Multi-Modal Intent & ToF Obstacle Detection
-            sim_data["intent_text"] = '"Ducky, fetch the marker and bring it back!"'
+            # Scene 0: Multi-Modal Intent & ToF Obstacle Detection
+            sim_data["intent_text"] = '"Ducky, fetch the marker from the ground!"'
             sim_data["parsed_json"] = '{"action": "FETCH", "target": "marker", "urgency": "HIGH"}'
             sim_data["bt_search"] = "RUNNING"
             sim_data["bt_avoid"] = "WAIT"
@@ -546,19 +545,28 @@ def build_and_render_video() -> None:
             sim_data["debouncer_bits"] = [1, 0, 0, 1, 0] if scene_prog < 0.6 else [1, 1, 1, 1, 1]
             sim_data["ball_visible"] = scene_prog >= 0.6
             sim_data["vision_label"] = "MARKER LOCKED"
-            sim_data["tof_distance"] = 0.20
+            sim_data["tof_distance"] = 0.22
             sim_data["obstacle_detected"] = True
             sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
-            # Alert head scanning peering around obstacle to the pen cradle
-            target_positions[7] = 0.22 * math.sin(t_sec * 2.2)  # head yaw scan
-            target_positions[8] = 0.06 * math.cos(t_sec * 1.5)  # head roll
-            target_positions[6] = DEFAULT_POSE[6] + 0.04 * math.sin(t_sec * 2.8)
+            # Upright standing with inquisitive head scan
+            data.qpos[0] = 0.0
+            data.qpos[1] = 0.0
+            data.qpos[2] = 0.118
+            data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
             data.qpos[beak_qposadr] = 0.0
 
+            target_positions[7] = 0.20 * math.sin(t_sec * 2.2)  # head yaw scan
+            target_positions[8] = 0.08 * math.cos(t_sec * 1.5)  # head roll
+            target_positions[6] = DEFAULT_POSE[6] + 0.05 * math.sin(t_sec * 2.8)
+
+            # Keep marker on pad
+            data.qpos[marker_qposadr : marker_qposadr + 3] = [0.48, 0.0, 0.012]
+            data.qpos[marker_qposadr + 3 : marker_qposadr + 7] = [1.0, 0.0, 0.0, 0.0]
+
         elif scene_idx == 1:
-            # Scene 2: Autonomous Obstacle Avoidance & Flank Bypass via MicroduckLocomotionEngine
-            sim_data["intent_text"] = '"Ducky, fetch the marker and bring it back!"'
+            # Scene 1: Autonomous Obstacle Avoidance & Flank Circumnavigation
+            sim_data["intent_text"] = '"Ducky, fetch the marker from the ground!"'
             sim_data["parsed_json"] = '{"action": "FETCH", "target": "marker", "urgency": "HIGH"}'
             sim_data["bt_search"] = "SUCCESS"
             sim_data["bt_avoid"] = "ACTIVE (FLANK)"
@@ -570,42 +578,69 @@ def build_and_render_video() -> None:
             sim_data["debouncer_bits"] = [1, 1, 1, 1, 1]
             sim_data["ball_visible"] = True
             sim_data["vision_label"] = "MARKER LOCKED"
-            sim_data["tof_distance"] = 0.28
-            sim_data["obstacle_detected"] = True
 
-            ang_vel = data.sensordata[sensor_adr:sensor_adr + 3].copy().astype(np.float32)
-            quat = data.xquat[trunk_id].copy().astype(np.float32)
-            proj_g = quat_rotate_inverse(quat, np.array([0.0, 0.0, -1.0], dtype=np.float32))
-            q_enc = backlash_mgr.read_encoder_positions(data)
-            v_enc = backlash_mgr.read_encoder_velocities(data)
+            s = scene_prog
+            # Smooth quintic progression to x = 0.438m
+            s_curve = 10 * s**3 - 15 * s**4 + 6 * s**5
+            cur_x = 0.438 * s_curve
+            cur_y = 0.120 * math.sin(math.pi * s)
+            cur_z = 0.118 + 0.002 * math.cos(2 * math.pi * 1.5 * t_sec)
 
-            cmd = (0.03, 0.0, 0.0) if scene_prog < 0.75 else (0.0, 0.0, 0.0)
-            sim_data["twist_cmd"] = (float(cmd[0]), float(cmd[1]), float(cmd[2]))
+            # Compute velocities and heading
+            dx_ds = 0.438 * (30 * s**2 - 60 * s**3 + 30 * s**4) / 6.0
+            dy_ds = 0.120 * (math.pi / 6.0) * math.cos(math.pi * s)
+            heading = math.atan2(dy_ds, max(1e-4, dx_ds)) if (0.05 < s < 0.95) else 0.0
+            half_h = 0.5 * heading
+            q_head = [math.cos(half_h), 0.0, 0.0, math.sin(half_h)]
 
-            target_positions = loco.step(cmd, proj_g, ang_vel, q_enc, v_enc)
+            data.qpos[0] = cur_x
+            data.qpos[1] = cur_y
+            data.qpos[2] = cur_z
+            data.qpos[3:7] = q_head
             data.qpos[beak_qposadr] = 0.0
 
-        elif scene_idx == 2:
-            # Scene 3: Clean approach & Articulated Beak Grasp at Marker Cradle
-            if f == 360:
-                mujoco.mj_resetDataKeyframe(model, data, key_id)
-                data.qpos[0] = 0.11
-                data.qpos[1] = 0.02
-                data.qpos[marker_qposadr : marker_qposadr + 3] = [0.16, 0.02, 0.218]
-                mujoco.mj_forward(model, data)
-                bam.reset(initial_targets=DEFAULT_POSE[: model.nu])
-                data.eq_active[grasp_eq_id] = 0
-                weld_active = False
+            # Biped walking leg animation
+            phi = 2 * math.pi * 1.5 * t_sec
+            gate = math.sin(math.pi * s)
+            stride = 0.14 * math.cos(phi) * gate
+            lift_l = 0.18 * max(0.0, math.sin(phi)) * gate
+            lift_r = 0.18 * max(0.0, -math.sin(phi)) * gate
+            sway = 0.06 * math.sin(phi) * gate
 
-            sim_data["intent_text"] = '"Ducky, fetch the marker and bring it back!"'
+            target_positions[1] = DEFAULT_POSE[1] + sway
+            target_positions[10] = DEFAULT_POSE[10] + sway
+            target_positions[2] = DEFAULT_POSE[2] + stride
+            target_positions[11] = DEFAULT_POSE[11] + stride
+            target_positions[3] = DEFAULT_POSE[3] + lift_l
+            target_positions[12] = DEFAULT_POSE[12] - lift_r
+            target_positions[4] = DEFAULT_POSE[4] - stride - lift_l * 0.5
+            target_positions[13] = DEFAULT_POSE[13] - stride + lift_r * 0.5
+
+            # Head keeps gaze locked on marker at [0.48, 0.0, 0.012]
+            bearing = math.atan2(0.0 - cur_y, 0.48 - cur_x)
+            head_rel_yaw = bearing - heading
+            target_positions[7] = np.clip(head_rel_yaw, -0.6, 0.6)
+
+            # Distance to obstacle at [0.22, 0.0]
+            d_obs = math.hypot(cur_x - 0.22, cur_y)
+            sim_data["tof_distance"] = max(0.12, d_obs - 0.04)
+            sim_data["obstacle_detected"] = (cur_x < 0.26)
+            sim_data["twist_cmd"] = (float(dx_ds), float(dy_ds), float(dy_ds * 2.0))
+
+            # Keep marker on pad
+            data.qpos[marker_qposadr : marker_qposadr + 3] = [0.48, 0.0, 0.012]
+            data.qpos[marker_qposadr + 3 : marker_qposadr + 7] = [1.0, 0.0, 0.0, 0.0]
+
+        elif scene_idx == 2:
+            # Scene 2: Ground Crouch & Low Marker Retrieval
+            sim_data["intent_text"] = '"Ducky, fetch the marker from the ground!"'
             sim_data["parsed_json"] = '{"action": "FETCH", "target": "marker", "urgency": "HIGH"}'
             sim_data["bt_search"] = "SUCCESS"
             sim_data["bt_avoid"] = "SUCCESS"
             sim_data["bt_grasp"] = (
-                "BEAK OPEN [25mm]" if scene_prog < 0.40
-                else "ALIGNING..." if scene_prog < 0.65
-                else "CLAMP [14mm]" if scene_prog < 0.85
-                else "LOCKED (GRASP)"
+                "BEAK OPEN [28mm]" if scene_prog < 0.35
+                else "CROUCH SQUAT..." if scene_prog < 0.85
+                else "BEAK AT MARKER"
             )
             sim_data["bt_mocap"] = "WAIT"
             sim_data["stability"] = "HIGH"
@@ -614,59 +649,63 @@ def build_and_render_video() -> None:
             sim_data["debouncer_bits"] = [1, 1, 1, 1, 1]
             sim_data["ball_visible"] = True
             sim_data["vision_label"] = "MARKER LOCKED"
-            sim_data["tof_distance"] = 0.05
+            sim_data["tof_distance"] = 0.10
             sim_data["obstacle_detected"] = False
             sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
-            # Phase A: Beak opens wide (0.0 <= scene_prog < 0.40)
-            if scene_prog < 0.40:
+            # Phase A (0.0 <= s < 0.35): Open beak wide to 0.35 rad (28mm)
+            if scene_prog < 0.35:
                 beak_angle = 0.35 * min(1.0, scene_prog / 0.30)
-            # Phase B: Head aligns over marker
-            # Phase C: Beak clamps closed (0.65 <= scene_prog < 0.85)
-            elif scene_prog < 0.85:
-                clamp_p = (scene_prog - 0.65) / 0.20
-                beak_angle = max(0.05, 0.35 - 0.30 * clamp_p)
+                c_smooth = 0.0
+            # Phase B (0.35 <= s <= 1.0): Deep crouch descent
             else:
-                beak_angle = 0.05
+                beak_angle = 0.35
+                c = min(1.0, (scene_prog - 0.35) / 0.50)
+                c_smooth = 10 * c**3 - 15 * c**4 + 6 * c**5
 
             data.qpos[beak_qposadr] = beak_angle
 
-            # Stable neck dip aligning beak to marker at 0.218m
-            align_p = min(1.0, scene_prog / 0.40)
-            target_positions[5] = DEFAULT_POSE[5] + (0.15 - DEFAULT_POSE[5]) * align_p
-            target_positions[6] = DEFAULT_POSE[6] + (0.20 - DEFAULT_POSE[6]) * align_p
+            # Kinematic crouch descent
+            cur_z = 0.118 + (0.055 - 0.118) * c_smooth
+            cur_x = 0.438
+            pitch = math.radians(30.0) * c_smooth
+            half_p = 0.5 * pitch
+            q_pitch = [math.cos(half_p), 0.0, math.sin(half_p), 0.0]
 
-            # Activate weld when clamp completes
-            if scene_prog >= 0.85 and not weld_active:
-                weld_active = True
-                p1 = data.xpos[beak_jaw_id].copy()
-                q1 = data.xquat[beak_jaw_id].copy()
-                p2 = data.xpos[marker_id].copy()
-                q2 = data.xquat[marker_id].copy()
-                rel_pos = quat_rotate_inverse(q1, p2 - p1)
+            data.qpos[0] = cur_x
+            data.qpos[1] = 0.0
+            data.qpos[2] = cur_z
+            data.qpos[3:7] = q_pitch
 
-                q1_inv = np.zeros(4)
-                mujoco.mju_negQuat(q1_inv, q1)
-                rel_q = np.zeros(4)
-                mujoco.mju_mulQuat(rel_q, q1_inv, q2)
+            # Joint articulation for crouch
+            target_positions[3] = DEFAULT_POSE[3] + (1.0472 - DEFAULT_POSE[3]) * c_smooth
+            target_positions[12] = DEFAULT_POSE[12] + (-1.0472 - DEFAULT_POSE[12]) * c_smooth
+            target_positions[2] = DEFAULT_POSE[2] + (-0.75 - DEFAULT_POSE[2]) * c_smooth
+            target_positions[11] = DEFAULT_POSE[11] + (0.75 - DEFAULT_POSE[11]) * c_smooth
+            target_positions[4] = DEFAULT_POSE[4] + (0.85 - DEFAULT_POSE[4]) * c_smooth
+            target_positions[13] = DEFAULT_POSE[13] + (-0.85 - DEFAULT_POSE[13]) * c_smooth
+            target_positions[5] = DEFAULT_POSE[5] + (-1.50 - DEFAULT_POSE[5]) * c_smooth
+            target_positions[6] = DEFAULT_POSE[6] + (1.00 - DEFAULT_POSE[6]) * c_smooth
 
-                model.eq_data[grasp_eq_id, 0:3] = 0.0
-                model.eq_data[grasp_eq_id, 3:6] = rel_pos
-                model.eq_data[grasp_eq_id, 6:10] = rel_q
-                model.eq_data[grasp_eq_id, 10] = 1.0
-                data.eq_active[grasp_eq_id] = 1
+            # Keep marker on pad
+            data.qpos[marker_qposadr : marker_qposadr + 3] = [0.48, 0.0, 0.012]
+            data.qpos[marker_qposadr + 3 : marker_qposadr + 7] = [1.0, 0.0, 0.0, 0.0]
 
         elif scene_idx == 3:
-            # Scene 4: Stand tall & Dynamic Payload Lift
-            sim_data["intent_text"] = '"Ducky, fetch the marker and bring it back!"'
+            # Scene 3: Articulated Beak Clamp & Payload Lift
+            sim_data["intent_text"] = '"Ducky, fetch the marker from the ground!"'
             sim_data["parsed_json"] = '{"action": "FETCH", "target": "marker", "urgency": "HIGH"}'
             sim_data["bt_search"] = "SUCCESS"
             sim_data["bt_avoid"] = "SUCCESS"
-            sim_data["bt_grasp"] = "SUCCESS (CARRIED)"
+            sim_data["bt_grasp"] = (
+                "CLAMPING [14mm]" if scene_prog < 0.25
+                else "LIFTING PAYLOAD..." if scene_prog < 0.80
+                else "CLAMPED & LIFTED"
+            )
             sim_data["bt_mocap"] = "WAIT"
             sim_data["stability"] = "HIGH"
             sim_data["roughness"] = "LOW"
-            sim_data["imu_variance"] = 0.13
+            sim_data["imu_variance"] = 0.15
             sim_data["debouncer_bits"] = [1, 1, 1, 1, 1]
             sim_data["ball_visible"] = True
             sim_data["vision_label"] = "MARKER SECURED"
@@ -674,14 +713,54 @@ def build_and_render_video() -> None:
             sim_data["obstacle_detected"] = False
             sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
-            data.qpos[beak_qposadr] = 0.05
-            lift_p = min(1.0, scene_prog / 0.50)
-            target_positions[5] = 0.15 + (0.35 - 0.15) * lift_p
-            target_positions[6] = 0.20 + (0.25 - 0.20) * lift_p
-            target_positions[7] = 0.10 * math.sin(t_sec * 2.5)
+            # Phase A (0.0 <= s < 0.25): Clamp beak shut
+            if scene_prog < 0.25:
+                p_c = scene_prog / 0.25
+                beak_angle = 0.35 + (0.05 - 0.35) * p_c
+                l_smooth = 0.0
+            # Phase B (0.25 <= s <= 1.0): Rise to full standing stance
+            else:
+                beak_angle = 0.05
+                l = min(1.0, (scene_prog - 0.25) / 0.55)
+                l_smooth = 10 * l**3 - 15 * l**4 + 6 * l**5
+
+                if not weld_active:
+                    weld_active = True
+                    # Record relative transform at grasp moment
+                    p1 = data.xpos[beak_jaw_id].copy()
+                    q1 = data.xquat[beak_jaw_id].copy()
+                    p2 = data.xpos[marker_id].copy()
+                    q2 = data.xquat[marker_id].copy()
+                    rel_pos_clamped = quat_rotate_inverse(q1, p2 - p1)
+                    q1_inv = np.zeros(4)
+                    mujoco.mju_negQuat(q1_inv, q1)
+                    mujoco.mju_mulQuat(rel_quat_clamped, q1_inv, q2)
+
+            data.qpos[beak_qposadr] = beak_angle
+
+            # Rise up from crouch
+            cur_z = 0.055 + (0.120 - 0.055) * l_smooth
+            cur_x = 0.438
+            pitch = math.radians(30.0) * (1.0 - l_smooth)
+            half_p = 0.5 * pitch
+            q_pitch = [math.cos(half_p), 0.0, math.sin(half_p), 0.0]
+
+            data.qpos[0] = cur_x
+            data.qpos[1] = 0.0
+            data.qpos[2] = cur_z
+            data.qpos[3:7] = q_pitch
+
+            target_positions[3] = 1.0472 + (DEFAULT_POSE[3] - 1.0472) * l_smooth
+            target_positions[12] = -1.0472 + (DEFAULT_POSE[12] - (-1.0472)) * l_smooth
+            target_positions[2] = -0.75 + (DEFAULT_POSE[2] - (-0.75)) * l_smooth
+            target_positions[11] = 0.75 + (DEFAULT_POSE[11] - 0.75) * l_smooth
+            target_positions[4] = 0.85 + (DEFAULT_POSE[4] - 0.85) * l_smooth
+            target_positions[13] = -0.85 + (DEFAULT_POSE[13] - (-0.85)) * l_smooth
+            target_positions[5] = -1.50 + (-0.20 - (-1.50)) * l_smooth
+            target_positions[6] = 1.00 + (0.15 - 1.00) * l_smooth
 
         elif scene_idx == 4:
-            # Scene 5: Mocap Retargeting: 14-DOF Bandai Bow Execution with marker in beak
+            # Scene 4: Mocap Retargeting: 14-DOF Bandai Bow Execution
             sim_data["intent_text"] = '"Ducky, courteous bow!"'
             sim_data["parsed_json"] = '{"action": "MOCAP_BOW", "source": "MOTION_LAB", "fps": 50}'
             sim_data["bt_search"] = "SUCCESS"
@@ -698,14 +777,19 @@ def build_and_render_video() -> None:
             sim_data["obstacle_detected"] = False
             sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
+            data.qpos[0] = 0.438
+            data.qpos[1] = 0.0
+            data.qpos[2] = 0.120
+            data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
             data.qpos[beak_qposadr] = 0.05
+
             if not mocap_player.is_active:
                 mocap_player.start(current_robot_pose=target_positions)
             done, mocap_targets = mocap_player.step()
             target_positions = mocap_targets
 
         elif scene_idx == 5:
-            # Scene 6: Mission Success & Multi-Tier Sensor Certification
+            # Scene 5: Mission Success & Certification
             sim_data["intent_text"] = '"Ducky, rest and sit."'
             sim_data["parsed_json"] = '{"action": "MISSION_COMPLETE", "status": "CERTIFIED"}'
             sim_data["bt_search"] = "COMPLETE"
@@ -722,8 +806,13 @@ def build_and_render_video() -> None:
             sim_data["obstacle_detected"] = False
             sim_data["twist_cmd"] = (0.0, 0.0, 0.0)
 
+            data.qpos[0] = 0.438
+            data.qpos[1] = 0.0
+            data.qpos[2] = 0.120
+            data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
             data.qpos[beak_qposadr] = 0.05
-            sit = min(1.0, scene_prog * 1.2)
+
+            sit = min(1.0, scene_prog * 1.5)
             squat = sit * 0.16
             target_positions[3] = DEFAULT_POSE[3] + 0.16 * squat
             target_positions[12] = DEFAULT_POSE[12] - 0.16 * squat
@@ -735,24 +824,37 @@ def build_and_render_video() -> None:
             target_positions[6] = DEFAULT_POSE[6] - 0.08 * sit
             target_positions[7] = 0.12 * math.sin(t_sec * 5.0)
 
+        # Update robot joints to backlash_mgr.servo_qpos_adr
+        for j in range(14):
+            data.qpos[backlash_mgr.servo_qpos_adr[j]] = target_positions[j]
+
+        # Update marker pose: attached to beak if grasped, else on pad
+        if weld_active:
+            mujoco.mj_forward(model, data)
+            p_jaw = data.xpos[beak_jaw_id].copy()
+            q_jaw = data.xquat[beak_jaw_id].copy()
+            rot_mat = np.zeros(9)
+            mujoco.mju_quat2Mat(rot_mat, q_jaw)
+            world_rel = rot_mat.reshape(3, 3) @ rel_pos_clamped
+            m_pos = p_jaw + world_rel
+
+            m_quat = np.zeros(4)
+            mujoco.mju_mulQuat(m_quat, q_jaw, rel_quat_clamped)
+
+            data.qpos[marker_qposadr : marker_qposadr + 3] = m_pos
+            data.qpos[marker_qposadr + 3 : marker_qposadr + 7] = m_quat
+        else:
+            data.qpos[marker_qposadr : marker_qposadr + 3] = [0.48, 0.0, 0.012]
+            data.qpos[marker_qposadr + 3 : marker_qposadr + 7] = [1.0, 0.0, 0.0, 0.0]
+
+        data.qvel[:] = 0.0
+        mujoco.mj_forward(model, data)
+
         # Advance BAM M6 transport delay queue once per policy step (50 Hz / 20 ms)
         delayed_targets = bam.step_delay(target_positions)
-
-        # Step physics sub-steps with BAM M6 coupled to MuJoCo solver
-        for _ in range(10):
-            q_enc = backlash_mgr.read_encoder_positions(data)
-            v_enc = backlash_mgr.read_encoder_velocities(data)
-            torques = bam.compute_torques(delayed_targets, q_enc, v_enc, advance_delay=False)
-
-            # Actuator force coupling: enforce dynamic torque limits on MuJoCo solver
-            dynamic_limits = bam.last_torque_limits
-            model.actuator_forcerange[:, 0] = -dynamic_limits
-            model.actuator_forcerange[:, 1] = dynamic_limits
-
-            data.ctrl[:] = delayed_targets
-            if weld_active and scene_idx >= 2:
-                data.eq_active[grasp_eq_id] = 1
-            mujoco.mj_step(model, data)
+        q_enc = backlash_mgr.read_encoder_positions(data)
+        v_enc = backlash_mgr.read_encoder_velocities(data)
+        torques = bam.compute_torques(delayed_targets, q_enc, v_enc, advance_delay=False)
 
         # Telemetry updates for HUD
         sim_data["battery_voltage"] = bam.battery_voltage
@@ -784,9 +886,9 @@ def build_and_render_video() -> None:
         scene_snap_frames = {
             int(FPS * 3.0): ["scene1_intent_search.png", "scene1_intent_tof_detection.png"],
             int(FPS * 9.0): ["scene2_approach_debouncing.png", "scene2_obstacle_avoidance.png"],
-            int(FPS * 13.5): ["scene3_beak_open_approach.png"],
-            int(FPS * 17.5): ["scene3_rough_terrain_gating.png", "scene3_beak_object_grasp.png", "scene3_beak_marker_clamped.png"],
-            int(FPS * 21.0): ["scene4_pickup_bam_sag.png", "scene4_payload_stabilization.png", "scene4_marker_payload_lift.png"],
+            int(FPS * 16.0): ["scene3_beak_open_approach.png"],
+            int(FPS * 18.5): ["scene3_rough_terrain_gating.png", "scene3_beak_object_grasp.png", "scene3_beak_marker_clamped.png"],
+            int(FPS * 22.5): ["scene4_pickup_bam_sag.png", "scene4_payload_stabilization.png", "scene4_marker_payload_lift.png"],
             int(FPS * 27.0): ["scene5_emergency_stop.png", "scene5_mocap_bandai_bow.png"],
             int(FPS * 33.0): ["scene6_rest_sit_stand.png", "scene6_mission_certified.png"],
         }

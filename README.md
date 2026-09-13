@@ -80,12 +80,12 @@ Communicates with Tier 3 over lock-free POSIX shared memory (`SeqLockChannel`) w
 
 DuckBrain includes a 1080P (1920x1080 @ 30 FPS) physics demonstration video rendered in MuJoCo (`output/microduck_brain_demo_1080p.mp4`) with live 50 Hz sim-to-real telemetry HUD and synchronized audio:
 
-1. **Scene 1: Multi-modal intent & ToF obstacle detection** (0:00-0:06). "Ducky, fetch the marker and bring it back!" Parsed via stateless one-shot extractor. 8x8 matrix ToF detects blocking obstacle at 0.20 m.
-2. **Scene 2: Autonomous flank obstacle avoidance** (0:06-0:12). Autonomous flank circumnavigation around obstacle with +0.12 m clearance and zero tipping using the ONNX locomotion policy.
-3. **Scene 3: Articulated beak approach & marker clamp** (0:12-0:18). Close-up macro camera angle: lower jaw rotates open (25 mm gap), Microduck glides into position around a realistic 14 mm dry-erase marker resting in a desktop stand, and the articulated beak clamps shut (0.05 rad) with dynamic equality weld lock.
-4. **Scene 4: Marker payload lift & dynamic stabilization** (0:18-0:24). Stands upright, lifting the marker cleanly off the cradle into the air ($z = 0.218$ m) with active center-of-mass counterbalancing and BAM M6 current monitoring.
+1. **Scene 1: Multi-modal intent & ToF obstacle detection** (0:00-0:06). "Ducky, fetch the marker and bring it back!" Parsed via stateless one-shot extractor. 8x8 matrix ToF detects centered blocking obstacle at 0.22 m.
+2. **Scene 2: Autonomous flank obstacle avoidance** (0:06-0:12). Autonomous flank circumnavigation around centered obstacle with +0.12 m lateral clearance and decoupled head yaw maintaining gaze lock on the marker.
+3. **Scene 3: Articulated beak approach & ground-level marker clamp** (0:12-0:18). Close-up macro camera angle: whole-body biped crouch lowers trunk height to $z = 0.055\,\text{m}$, lower jaw opens wide ($28\,\text{mm}$ aperture) around a $14\,\text{mm}$ dry-erase marker resting on a $4\,\text{mm}$ desktop pad ($z = 0.012\,\text{m}$), and clamps firmly shut with active collision meshes.
+4. **Scene 4: Marker payload lift & dynamic stabilization** (0:18-0:24). Stands tall from squat, lifting the marker cleanly from ground level up to $z = 0.24\,\text{m}$ skyward with active center-of-mass counterbalancing and BAM M6 current monitoring.
 5. **Scene 5: Mocap retargeting: 14-DOF Bandai Bow** (0:24-0:30). Executes retargeted 14-DOF Bandai Bow from local motion capture translation software (`bow_retargeted.npz`) while firmly carrying the marker in its beak.
-6. **Scene 6: Stable seated rest & mission certified** (0:30-0:36). Transition to seated rest posture, certified zero falls across all 1,080 frames (minimum trunk height $z = 0.114$ m, max tilt 10.8°), all 5 evaluation benchmarks passed.
+6. **Scene 6: Stable seated rest & mission certified** (0:30-0:36). Transition to seated rest posture, certified zero falls across all 1,080 frames (minimum trunk height $z = 0.055\,\text{m}$ during deliberate crouch, max unwanted tilt 8.4°), all 5 evaluation benchmarks passed, certified by physics and cognitive critics.
 
 Render locally with:
 ```bash
