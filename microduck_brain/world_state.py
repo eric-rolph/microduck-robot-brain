@@ -133,6 +133,12 @@ class WorldState:
         self.tilt_deg: float = 0.0
         self.is_near_fall: bool = False
 
+        # Visual tracking state (Roboflow SORTTracker / BIoU)
+        self.target_locked: bool = False
+        self.visual_bearing_rad: float = 0.0
+        self.visual_range_m: float = 1.0
+        self.visual_track_id: int | None = None
+
     def update_orientation(self, roll: float, pitch: float) -> StateLevel:
         """Update stability from roll/pitch deviation."""
         deviation = math.sqrt(roll**2 + pitch**2)
@@ -213,6 +219,21 @@ class WorldState:
 
         return self.forward_clearance_m
 
+    def update_visual_tracking(
+        self,
+        target_locked: bool,
+        bearing_rad: float,
+        range_m: float,
+        track_id: Optional[int] = None,
+    ) -> None:
+        """Update visual tracking state from vision tracker."""
+        self.target_locked = bool(target_locked)
+        self.visual_bearing_rad = float(bearing_rad)
+        self.visual_range_m = float(range_m)
+        self.visual_track_id = track_id
+        if target_locked:
+            self.update_ball_visible(True)
+
     def to_dict(self) -> dict[str, Any]:
         """Export sanitized predicate dictionary for Behavior Tree ticks."""
         return {
@@ -228,4 +249,8 @@ class WorldState:
             "forward_clearance_m": self.forward_clearance_m,
             "tilt_deg": self.tilt_deg,
             "is_near_fall": self.is_near_fall,
+            "target_locked": self.target_locked,
+            "visual_bearing_rad": self.visual_bearing_rad,
+            "visual_range_m": self.visual_range_m,
+            "visual_track_id": self.visual_track_id,
         }

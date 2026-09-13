@@ -469,3 +469,81 @@ class MocapMotionActionNode(BehaviorNode):
 
     def abort(self) -> None:
         self.started = False
+
+
+class VoiceResponseNode(BehaviorNode):
+    """
+    Triggers an authentic Microduck procedural vocalization (greet, inquire, peck, chirp, coo, wheee)
+    when triggered by the Behavior Tree.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        recipe_name: str,
+        blackboard: Optional[Blackboard] = None,
+        sound_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        super().__init__(name, blackboard)
+        self.recipe_name = recipe_name
+        self.sound_callback = sound_callback
+        self.emitted = False
+
+    def tick(self, world_state: Mapping[str, Any]) -> SkillStatus:
+        if not self.emitted:
+            if self.sound_callback is not None:
+                self.sound_callback(self.recipe_name)
+            self.emitted = True
+            return SkillStatus.SUCCESS
+        return SkillStatus.SUCCESS
+
+    def abort(self) -> None:
+        self.emitted = False
+
+
+class VisualTrackApproachNode(BehaviorNode):
+    """
+    Visual servoing node: guides duck toward locked target using SORTTracker bearing and range.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        blackboard: Optional[Blackboard] = None,
+        target_range_m: float = 0.18,
+        velocity_callback: Optional[Callable[[float, float, float], None]] = None,
+    ) -> None:
+        super().__init__(name, blackboard)
+        self.target_range_m = target_range_m
+        self.velocity_callback = velocity_callback
+
+    def tick(self, world_state: Mapping[str, Any]) -> SkillStatus:
+        locked = bool(world_state.get("target_locked", False))
+        if not locked:
+            if self.velocity_callback is not None:
+                self.velocity_callback(0.0, 0.0, 0.05)
+            return SkillStatus.RUNNING
+
+        bearing = float(world_state.get("visual_bearing_rad", 0.0))
+        dist = float(world_state.get("visual_range_m", 1.0))
+
+        if (dist - self.target_range_m) <= 0.02 and abs(bearing) < 0.12:
+            if self.velocity_callback is not None:
+                self.velocity_callback(0.0, 0.0, 0.0)
+            return SkillStatus.SUCCESS
+
+        wz = float(np.clip(-0.75 * bearing, -0.15, 0.15))
+        if abs(bearing) > 0.40:
+            vx = 0.0
+        else:
+            vx = float(np.clip(0.30 * (dist - self.target_range_m), 0.0, 0.08))
+
+        if self.velocity_callback is not None:
+            self.velocity_callback(vx, 0.0, wz)
+
+        return SkillStatus.RUNNING
+
+    def abort(self) -> None:
+        if self.velocity_callback is not None:
+            self.velocity_callback(0.0, 0.0, 0.0)
+

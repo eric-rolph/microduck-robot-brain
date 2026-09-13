@@ -31,6 +31,9 @@ from microduck_brain.sim.bam_actuator import BamM6ActuatorModel, BamM6Config
 from microduck_brain.sim.backlash import BacklashManager
 from microduck_brain.sim.env import MicroduckMuJoCoEnv, DEFAULT_POSE, quat_rotate_inverse
 from microduck_brain.locomotion_engine import MicroduckLocomotionEngine, AttitudeCommandFilter
+from microduck_brain.vision.head_camera import HeadCamera
+from microduck_brain.vision.tracker import MicroduckVisualTracker
+from microduck_brain.audio.voice_interface import generate_mission_audio_track
 
 # Video configuration
 WIDTH = 1920
@@ -336,9 +339,9 @@ def render_hud_overlay(
     draw.text((54, 601), f"TWIST (3D): vx={vx:+.2f} vy={vy:+.2f} wz={wz:+.2f}", font=FONT_CONSOLAS_12, fill=(0, 240, 255, 240))
     draw.text((54, 617), "HEAD (4D) + TRUNK BASE POSE (6D)", font=FONT_CONSOLAS_12, fill=(180, 190, 200, 200))
 
-    # 6. Card 4 (Top-Right): Tier 3 Reactive Behavior Tree
-    draw_hud_card(draw, WIDTH - 470, 100, 438, 200, border_color=(255, 200, 50, 220))
-    draw.text((WIDTH - 458, 108), "TIER 3: BEHAVIOR TREE", font=FONT_CONSOLAS_18, fill=(255, 200, 50, 255))
+    # 6. Card 4 (Right, Below PiP): Tier 3 Reactive Behavior Tree
+    draw_hud_card(draw, WIDTH - 470, 322, 438, 175, border_color=(255, 200, 50, 220))
+    draw.text((WIDTH - 458, 330), "TIER 3: BEHAVIOR TREE", font=FONT_CONSOLAS_18, fill=(255, 200, 50, 255))
 
     bt_nodes = [
         ("SearchActionNode", sim_data.get("bt_search", "[SUCCESS]")),
@@ -348,42 +351,42 @@ def render_hud_overlay(
         ("MazeNavigatorNode", sim_data.get("bt_maze", "[WAIT]")),
         ("ReceptacleDropNode", sim_data.get("bt_drop", "[WAIT]")),
     ]
-    bty = 135
+    bty = 356
     for n_name, n_status in bt_nodes:
         draw.text((WIDTH - 458, bty), f"► {n_name}", font=FONT_CONSOLAS_14, fill=(220, 220, 220, 220))
         c_stat = (50, 255, 150, 255) if "SUCCESS" in n_status or "COMPLETE" in n_status or "GROUNDED" in n_status else (0, 240, 255, 255) if "RUN" in n_status or "ACTIVE" in n_status or "NAV" in n_status or "SQUAT" in n_status or "DROP" in n_status or "AVOID" in n_status else (140, 150, 160, 180)
         draw.text((WIDTH - 225, bty), n_status, font=FONT_CONSOLAS_14, fill=c_stat)
-        bty += 23
+        bty += 21
 
-    # 7. Card 5 (Mid-Right): Tier 4 BAM M6 Motor Dynamics & Backlash Twin
-    draw_hud_card(draw, WIDTH - 470, 312, 438, 260, border_color=(0, 240, 255, 220))
-    draw.text((WIDTH - 458, 320), "TIER 4: BAM M6 MOTOR DYNAMICS", font=FONT_CONSOLAS_18, fill=(0, 240, 255, 255))
+    # 7. Card 5 (Right, Bottom): Tier 4 BAM M6 Motor Dynamics & Backlash Twin
+    draw_hud_card(draw, WIDTH - 470, 508, 438, 240, border_color=(0, 240, 255, 220))
+    draw.text((WIDTH - 458, 516), "TIER 4: BAM M6 MOTOR DYNAMICS", font=FONT_CONSOLAS_18, fill=(0, 240, 255, 255))
 
     v_batt = sim_data.get("battery_volts", 7.4)
-    draw.text((WIDTH - 458, 345), f"BATTERY VOLTAGE: {v_batt:.2f} V", font=FONT_CONSOLAS_16, fill=(255, 220, 50, 255))
-    draw.rectangle([(WIDTH - 458, 368), (WIDTH - 50, 380)], fill=(30, 40, 50, 200))
+    draw.text((WIDTH - 458, 540), f"BATTERY VOLTAGE: {v_batt:.2f} V", font=FONT_CONSOLAS_16, fill=(255, 220, 50, 255))
+    draw.rectangle([(WIDTH - 458, 563), (WIDTH - 50, 575)], fill=(30, 40, 50, 200))
     pct = min(1.0, max(0.0, (v_batt - 6.0) / (8.2 - 6.0)))
-    draw.rectangle([(WIDTH - 458, 368), (WIDTH - 458 + int((408) * pct), 380)], fill=(255, 180, 30, 255))
-    draw.text((WIDTH - 458, 385), "6.0V (LOCKOUT)", font=FONT_CONSOLAS_12, fill=(160, 170, 180, 180))
-    draw.text((WIDTH - 130, 385), "8.2V (FULL)", font=FONT_CONSOLAS_12, fill=(160, 170, 180, 180))
+    draw.rectangle([(WIDTH - 458, 563), (WIDTH - 458 + int((408) * pct), 575)], fill=(255, 180, 30, 255))
+    draw.text((WIDTH - 458, 579), "6.0V (LOCKOUT)", font=FONT_CONSOLAS_12, fill=(160, 170, 180, 180))
+    draw.text((WIDTH - 130, 579), "8.2V (FULL)", font=FONT_CONSOLAS_12, fill=(160, 170, 180, 180))
 
-    draw.text((WIDTH - 458, 408), "BACKLASH TWIN: ±1.0° ACTIVE", font=FONT_CONSOLAS_14, fill=(50, 255, 150, 240))
-    draw.text((WIDTH - 458, 426), "POLLEN XL330 LIMITS: 100% COMPLIANT", font=FONT_CONSOLAS_12, fill=(200, 220, 255, 200))
+    draw.text((WIDTH - 458, 600), "BACKLASH TWIN: ±1.0° ACTIVE", font=FONT_CONSOLAS_14, fill=(50, 255, 150, 240))
+    draw.text((WIDTH - 458, 618), "POLLEN XL330 LIMITS: 100% COMPLIANT", font=FONT_CONSOLAS_12, fill=(200, 220, 255, 200))
 
-    draw.text((WIDTH - 458, 448), "14-SERVO INSTANT TORQUES (N*m):", font=FONT_CONSOLAS_12, fill=(180, 190, 200, 200))
+    draw.text((WIDTH - 458, 638), "14-SERVO INSTANT TORQUES (N*m):", font=FONT_CONSOLAS_12, fill=(180, 190, 200, 200))
     t_hist = sim_data.get("torques", np.zeros(14, dtype=np.float32))
     hx0 = WIDTH - 458
     bar_w = 22
     for s_idx in range(14):
         t_val = abs(float(t_hist[s_idx])) if s_idx < len(t_hist) else 0.05
-        b_h = int(min(60, max(4, t_val * 140.0)))
+        b_h = int(min(45, max(4, t_val * 120.0)))
         bx = hx0 + s_idx * (bar_w + 5)
         b_col = (0, 240, 255, 230) if (s_idx < 5 or s_idx >= 9) else (255, 180, 50, 230)
-        draw.rectangle([(bx, 530 - b_h), (bx + bar_w, 530)], fill=b_col)
+        draw.rectangle([(bx, 690 - b_h), (bx + bar_w, 690)], fill=b_col)
 
-    draw.text((hx0, 534), "L-LEG[0-4]", font=FONT_CONSOLAS_12, fill=(140, 160, 180, 200))
-    draw.text((hx0 + 135, 534), "HEAD[5-8]", font=FONT_CONSOLAS_12, fill=(255, 180, 50, 200))
-    draw.text((hx0 + 265, 534), "R-LEG[9-13]", font=FONT_CONSOLAS_12, fill=(140, 160, 180, 200))
+    draw.text((hx0, 696), "L-LEG[0-4]", font=FONT_CONSOLAS_12, fill=(140, 160, 180, 200))
+    draw.text((hx0 + 135, 696), "HEAD[5-8]", font=FONT_CONSOLAS_12, fill=(255, 180, 50, 200))
+    draw.text((hx0 + 265, 696), "R-LEG[9-13]", font=FONT_CONSOLAS_12, fill=(140, 160, 180, 200))
 
     # 8. Bottom Contextual Status Banner
     banner_text = sim_data.get("status_banner", "AUTONOMOUS MULTI-TASK DEMO // ZERO FALLS CERTIFIED")
@@ -437,8 +440,15 @@ def render_full_demo():
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video_writer = cv2.VideoWriter(str(raw_video_path), fourcc, FPS, (WIDTH, HEIGHT))
 
-    # Sound generation
-    generate_audio_track()
+    # Sound generation: multi-track procedural quacks + Windows SAPI voiceover
+    print("Synthesizing multi-track soundtrack (Windows SAPI + Microduck procedural synthesis)...")
+    generate_mission_audio_track(AUDIO_PATH, total_duration_s=TOTAL_DURATION, duck_seed=42)
+
+    # Head Camera & Visual Tracking (Alex Bodner SORT+BIoU architecture)
+    pip_w, pip_h = 438, 246
+    pip_x, pip_y = WIDTH - 470, 65
+    head_cam = HeadCamera(model, camera_name="head_camera", width=pip_w, height=pip_h)
+    tracker = MicroduckVisualTracker(frame_rate=float(FPS), buffer_ratio=2.0, image_width=pip_w, image_height=pip_h)
 
     # State variables
     weld_active = False
@@ -660,6 +670,18 @@ def render_full_demo():
             assert not term, f"Robot fell at frame {f}, time {sim_time:.2f}s!"
             sim_time += sim_dt
 
+        # Select visual tracker target class
+        if stage_idx < 4:
+            tracker.set_target_class(0)  # Marker
+        else:
+            tracker.set_target_class(2)  # Container
+
+        # Head camera render & visual tracking update
+        head_rgb = head_cam.render_rgb(data)
+        head_dets = head_cam.detect_objects(data)
+        track_state = tracker.update(head_dets, rgb_frame=head_rgb)
+        head_ann = track_state.annotated_frame if track_state.annotated_frame is not None else head_rgb
+
         # Extract telemetry directly from physical simulation
         p_trunk = data.xpos[trunk_id]
         rx, ry, rz = float(p_trunk[0]), float(p_trunk[1]), float(p_trunk[2])
@@ -739,6 +761,30 @@ def render_full_demo():
         pil_frame = Image.fromarray(rgb_frame).convert("RGBA")
         pil_hud = Image.fromarray(hud_overlay)
         composed = Image.alpha_composite(pil_frame, pil_hud).convert("RGB")
+
+        # Composite Head Camera PiP Window (top-right)
+        pil_pip = Image.fromarray(head_ann)
+        composed.paste(pil_pip, (pip_x, pip_y))
+
+        draw_comp = ImageDraw.Draw(composed)
+        draw_comp.rectangle([(pip_x, pip_y), (pip_x + pip_w, pip_y + pip_h)], outline=(0, 240, 255), width=2)
+
+        # Center reticle
+        cx, cy = pip_x + pip_w // 2, pip_y + pip_h // 2
+        draw_comp.line([(cx - 10, cy), (cx + 10, cy)], fill=(0, 240, 255), width=1)
+        draw_comp.line([(cx, cy - 10), (cx, cy + 10)], fill=(0, 240, 255), width=1)
+
+        # Header banner strip
+        draw_comp.rectangle([(pip_x + 2, pip_y + 2), (pip_x + pip_w - 2, pip_y + 24)], fill=(8, 14, 22))
+        draw_comp.text((pip_x + 8, pip_y + 5), "HEAD-CAM (90 deg FOV) // SORT+BIoU", font=FONT_CONSOLAS_12, fill=(0, 240, 255))
+        lock_txt = "[TARGET: LOCKED]" if track_state.target_locked else "[ACQUIRING]"
+        draw_comp.text((pip_x + 285, pip_y + 5), lock_txt, font=FONT_CONSOLAS_12, fill=(50, 255, 150) if track_state.target_locked else (255, 200, 50))
+
+        # Bottom telemetry strip
+        draw_comp.rectangle([(pip_x + 2, pip_y + pip_h - 22), (pip_x + pip_w - 2, pip_y + pip_h - 2)], fill=(8, 14, 22))
+        bear_deg = math.degrees(track_state.bearing_rad)
+        draw_comp.text((pip_x + 8, pip_y + pip_h - 19), f"BEARING: {bear_deg:+4.1f} deg | RANGE: {track_state.range_m:.2f}m", font=FONT_CONSOLAS_12, fill=(200, 220, 255))
+        draw_comp.text((pip_x + 310, pip_y + pip_h - 19), "BIoU b_ratio=2.0", font=FONT_CONSOLAS_12, fill=(180, 190, 200))
 
         bgr_frame = cv2.cvtColor(np.array(composed), cv2.COLOR_RGB2BGR)
         video_writer.write(bgr_frame)
