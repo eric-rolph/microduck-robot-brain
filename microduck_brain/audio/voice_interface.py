@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 import numpy as np
 import scipy.io.wavfile as wavfile
@@ -23,23 +25,47 @@ def synthesize_human_command(
     output_path: str | Path,
     voice_name: str = "Microsoft Zira Desktop",
 ) -> Path:
-    """Synthesize human speech command to a WAV file using Windows Speech Synthesizer."""
+    """Synthesize human speech command to a WAV file.
+
+    Uses Windows Speech Synthesizer (SAPI) on Windows, falls back to espeak-ng/espeak
+    when installed on Linux/macOS, and generates a deterministic speech-cadence WAV
+    fallback in headless environments with no TTS binary.
+    """
     out = Path(output_path).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    escaped_text = text.replace("'", "''")
-    ps_script = (
-        f"Add-Type -AssemblyName System.Speech; "
-        f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-        f"try {{ $s.SelectVoice('{voice_name}') }} catch {{ }}; "
-        f"$s.Rate = 0; "
-        f"$s.SetOutputToWaveFile('{str(out)}'); "
-        f"$s.Speak('{escaped_text}'); "
-        f"$s.Dispose()"
-    )
+    if sys.platform == "win32":
+        escaped_text = text.replace("'", "''")
+        ps_script = (
+            f"Add-Type -AssemblyName System.Speech; "
+            f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+            f"try {{ $s.SelectVoice('{voice_name}') }} catch {{ }}; "
+            f"$s.Rate = 0; "
+            f"$s.SetOutputToWaveFile('{str(out)}'); "
+            f"$s.Speak('{escaped_text}'); "
+            f"$s.Dispose()"
+        )
+        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script]
+        subprocess.run(cmd, check=True, capture_output=True)
+        return out
 
-    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script]
-    subprocess.run(cmd, check=True, capture_output=True)
+    for tts_bin in ("espeak-ng", "espeak"):
+        if shutil.which(tts_bin):
+            subprocess.run([tts_bin, "-w", str(out), text], check=True, capture_output=True)
+            return out
+
+    # Headless fallback: synthesize a finite speech-cadence formant envelope WAV
+    sr = 22050
+    dur_s = max(0.6, min(4.0, 0.055 * max(1, len(text))))
+    t = np.linspace(0.0, dur_s, int(sr * dur_s), endpoint=False, dtype=np.float32)
+    syllable_env = 0.5 * (1.0 + np.sin(2.0 * np.pi * 4.2 * t))
+    carrier = (
+        0.55 * np.sin(2.0 * np.pi * 195.0 * t)
+        + 0.30 * np.sin(2.0 * np.pi * 390.0 * t)
+        + 0.15 * np.sin(2.0 * np.pi * 780.0 * t)
+    )
+    pcm = np.clip(carrier * syllable_env * 0.4, -1.0, 1.0)
+    wavfile.write(str(out), sr, (pcm * 32767.0).astype(np.int16))
     return out
 
 
