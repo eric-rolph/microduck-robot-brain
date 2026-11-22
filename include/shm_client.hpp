@@ -18,7 +18,7 @@ public:
             flags |= O_CREAT;
         }
 
-        fd_ = shm_open(MICRODUCK_SHM_NAME, flags, 0666);
+        fd_ = shm_open(MICRODUCK_SHM_NAME, flags, 0660);
         if (fd_ < 0) {
             throw std::runtime_error("shm_open failed for Microduck IPC");
         }

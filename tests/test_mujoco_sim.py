@@ -166,6 +166,26 @@ def test_env_step_and_fall_detection() -> None:
     assert env.is_terminated() is True, "Height below 0.065 m must trigger termination"
 
 
+def test_env_exact_bam_torque_mode() -> None:
+    """Verify opt-in exact XL330 M6 torque actuation mode resets cleanly and steps stably."""
+    env = MicroduckMuJoCoEnv(use_backlash=True, use_exact_bam=True)
+    obs = env.reset()
+    assert obs.shape == (61,)
+    assert np.all(np.isfinite(obs))
+
+    action = np.zeros(14, dtype=np.float32)
+    for _ in range(10):
+        obs, reward, term, _trunc, info = env.step(action)
+        assert obs.shape == (61,)
+        assert np.all(np.isfinite(obs))
+        assert not term
+        assert reward > 0.0
+        assert info["trunk_height"] > 0.08
+
+    env.data.qpos[2] = 0.04
+    assert env.is_terminated() is True
+
+
 def test_ppo_smoke_training_loop() -> None:
     """Run lightweight PPO training loop to verify loss convergence and metric reporting."""
     trainer = MicroduckPPO(num_envs=2, steps_per_env=16, device="cpu")

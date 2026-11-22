@@ -14,8 +14,8 @@ RestartSec=1s
 KillSignal=SIGTERM
 TimeoutStopSec=3s
 
-# CPU affinity: Run brain on cores 2-3, leaving core 4 isolated for robotd RT motor loop
-CPUAffinity=2,3
+# CPU affinity: Run brain on cores 1-2, leaving core 3 isolated for robotd RT motor loop (4-core CM4)
+CPUAffinity=1,2
 Nice=-5
 
 StandardOutput=journal

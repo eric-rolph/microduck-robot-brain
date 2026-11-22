@@ -43,3 +43,18 @@ def test_pollen_client_skill_request():
     sent_data = mock_sock.sendall.call_args[0][0].decode("utf-8")
     assert '"method": "robot.do"' in sent_data
     assert '"skill": "ground_pick"' in sent_data
+
+
+def test_pollen_client_subscribe_rejects_jsonrpc_error():
+    client = PollenRobotdClient()
+    mock_sock = MagicMock()
+    mock_sock.recv.return_value = b'{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}\n'
+    client.sock = mock_sock
+
+    assert client.subscribe_state(lambda _state: None) is False
+
+
+def test_pollen_client_ignores_untracked_late_replies():
+    client = PollenRobotdClient()
+    client._handle_incoming_message('{"jsonrpc":"2.0","id":999,"result":{"ok":true}}')
+    assert 999 not in client.pending_responses

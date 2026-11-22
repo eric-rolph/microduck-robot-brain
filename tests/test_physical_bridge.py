@@ -132,3 +132,86 @@ def test_physical_controller_safety_locks():
     ctrl.tick_behavior_tree()
 
     ctrl.stop()
+
+
+def test_physical_controller_intent_dispatch_and_behavior_trees():
+    ctrl = PhysicalMicroduckController(dry_run=False)
+    ctrl.client = MagicMock()
+    ctrl.tof_client = MagicMock()
+    ctrl.running = True
+    ctrl.world_state.update_battery_voltage(7.6)
+
+    # 1. 'quack' dispatches play_sound("quack"), NOT emergency stop
+    assert ctrl.set_intent("quack") == "QUACK"
+    ctrl.client.play_sound.assert_called_once_with("quack")
+    ctrl.client.stop.assert_not_called()
+
+    # 2. 'bow' and 'kick' dispatch stop() + do_skill(...)
+    ctrl.client.reset_mock()
+    assert ctrl.set_intent("bow") == "SKILL"
+    ctrl.client.stop.assert_called_once()
+    ctrl.client.do_skill.assert_called_once_with("bow")
+
+    ctrl.client.reset_mock()
+    assert ctrl.set_intent("kick") == "SKILL"
+    ctrl.client.stop.assert_called_once()
+    ctrl.client.do_skill.assert_called_once_with("kick")
+
+    # 3. 'come' -> FOLLOW BT moves forward when clear, stops when obstacle close
+    ctrl.client.reset_mock()
+    assert ctrl.set_intent("come") == "FOLLOW"
+    ctrl.world_state.obstacle_close = False
+    ctrl.tick_behavior_tree()
+    ctrl.client.move.assert_called_with(vx=0.10, vy=0.0, vyaw=0.0)
+
+    ctrl.client.reset_mock()
+    ctrl.world_state.obstacle_close = True
+    ctrl.tick_behavior_tree()
+    ctrl.client.stop.assert_called_once()
+
+    # 4. 'fetch ball' -> Selector BT: search -> approach -> ground_pick + quack
+    ctrl.client.reset_mock()
+    assert ctrl.set_intent("fetch ball") == "FETCH"
+    ctrl.world_state.ball_visible = False
+    ctrl.world_state.obstacle_close = False
+    ctrl.tick_behavior_tree()
+    ctrl.client.move.assert_called_with(vx=0.0, vy=0.0, vyaw=0.25)
+
+    ctrl.client.reset_mock()
+    ctrl.world_state.ball_visible = True
+    ctrl.world_state.obstacle_close = False
+    ctrl.tick_behavior_tree()
+    ctrl.client.move.assert_called_with(vx=0.12, vy=0.0, vyaw=0.0)
+
+    ctrl.client.reset_mock()
+    ctrl.world_state.ball_visible = True
+    ctrl.world_state.obstacle_close = True
+    ctrl.tick_behavior_tree()
+    ctrl.client.do_skill.assert_called_once_with("ground_pick")
+    ctrl.client.play_sound.assert_called_once_with("quack")
+    assert ctrl.active_intent == "WAIT"
+
+    # 5. 'wait' resets intent cleanly and ambient scan clamps to 0 when unstable
+    assert ctrl.set_intent("wait") == "WAIT"
+    ctrl.world_state.stability = "LOW"
+    ctrl.tick_behavior_tree()
+    assert ctrl.head_trim == [0.0, 0.0]
+
+    # 6. Brownout lock stops robot and refuses locomotion
+    ctrl.client.reset_mock()
+    ctrl.set_intent("patrol")
+    ctrl.world_state.update_battery_voltage(6.2)
+    ctrl.tick_behavior_tree()
+    ctrl.client.stop.assert_called_once()
+    ctrl.client.move.assert_not_called()
+
+    # 7. Telemetry staleness watchdog stops robot when telemetry goes silent
+    import time
+    ctrl.client.reset_mock()
+    ctrl.world_state.update_battery_voltage(7.6)
+    ctrl.set_intent("come")
+    ctrl.telemetry_timeout_s = 0.05
+    ctrl.last_telemetry_time = time.monotonic() - 1.0
+    ctrl.tick_behavior_tree()
+    ctrl.client.stop.assert_called_once()
+    ctrl.client.move.assert_not_called()

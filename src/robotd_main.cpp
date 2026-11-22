@@ -1,4 +1,6 @@
-// robotd_main.cpp - Microduck real-time motor daemon (50-100 Hz RT loop)
+// robotd_main.cpp - SeqLock shared-memory RT loop harness (50 Hz IPC latency benchmark/stub).
+// Production physical Microduck deployment communicates with Pollen Robotics' robotd over
+// /run/robotd.sock via microduck_brain/pollen_bridge.py.
 #include "shm_client.hpp"
 #include <chrono>
 #include <iostream>
@@ -40,8 +42,10 @@ int main(int argc, char** argv) {
     ShmClient shm(true);
     DuckSharedMemory* mem = shm.get();
 
-    MotionCommand cmd;
-    RobotFeedback feedback;
+    MotionCommand cmd{};
+    MotionCommand last_valid_cmd{};
+    bool has_valid_cmd = false;
+    RobotFeedback feedback{};
 
     std::cout << "[robotd] Real-time engine started. Initialized shared memory.\n";
 
@@ -54,21 +58,23 @@ int main(int argc, char** argv) {
         auto start_time = get_time_ns();
 
         // 1. Non-blocking read from BT command channel
-        bool valid_read = mem->cmd_channel.read(cmd);
-        if (valid_read) {
-            // Watchdog check: Has BT stopped publishing or timed out?
-            if ((start_time - cmd.timestamp_ns > COMMAND_TIMEOUT_NS) || cmd.emergency_stop) {
-                cmd.vx = 0.0f;
-                cmd.vy = 0.0f;
-                cmd.wz = 0.0f;
-                cmd.roll_cmd = 0.0f;
-                cmd.pitch_cmd = 0.0f;
-            }
-        } else {
-            // Read conflict or uninitialized: clamp to zero
+        MotionCommand latest_cmd{};
+        if (mem->cmd_channel.read(latest_cmd)) {
+            last_valid_cmd = latest_cmd;
+            has_valid_cmd = true;
+        }
+
+        cmd = has_valid_cmd ? last_valid_cmd : MotionCommand{};
+        const bool timed_out = !has_valid_cmd
+            || cmd.timestamp_ns == 0
+            || (start_time > cmd.timestamp_ns && (start_time - cmd.timestamp_ns > COMMAND_TIMEOUT_NS));
+
+        if (timed_out || cmd.emergency_stop) {
             cmd.vx = 0.0f;
             cmd.vy = 0.0f;
             cmd.wz = 0.0f;
+            cmd.roll_cmd = 0.0f;
+            cmd.pitch_cmd = 0.0f;
         }
 
         // 2. Control evaluation: In production, feeds observation vector to ONNX engine

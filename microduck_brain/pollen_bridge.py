@@ -112,15 +112,24 @@ class PollenRobotdClient:
             self.response_events.clear()
             self.pending_responses.clear()
 
+    MAX_BUFFER_BYTES = 1_048_576
+
     def _reader_loop(self) -> None:
         """Background thread reading newline-delimited JSON-RPC messages."""
         buffer = b""
-        while self._running and self.sock is not None:
+        while self._running:
+            sock = self.sock
+            if sock is None:
+                break
             try:
-                chunk = self.sock.recv(4096)
+                chunk = sock.recv(4096)
                 if not chunk:
                     break
                 buffer += chunk
+                if len(buffer) > self.MAX_BUFFER_BYTES:
+                    # Drop oversized malformed stream without newline to prevent OOM
+                    buffer = b""
+                    continue
 
                 while b"\n" in buffer:
                     line, buffer = buffer.split(b"\n", 1)
@@ -143,13 +152,13 @@ class PollenRobotdClient:
         if not isinstance(msg, dict):
             return
 
-        # Handle request-response
+        # Handle request-response (ignore late replies for already timed-out requests)
         if "id" in msg and msg["id"] is not None:
             req_id = msg["id"]
             with self.pending_lock:
-                self.pending_responses[req_id] = msg
                 event = self.response_events.get(req_id)
                 if event is not None:
+                    self.pending_responses[req_id] = msg
                     event.set()
             return
 
@@ -238,7 +247,12 @@ class PollenRobotdClient:
         """Subscribes to 50 Hz robot.state telemetry stream."""
         self.state_callback = callback
         resp = self.send_request("robot.subscribe")
-        return resp is not None and resp.get("result", {}).get("subscribed", True)
+        if resp is None or "error" in resp:
+            return False
+        result = resp.get("result")
+        if isinstance(result, dict):
+            return bool(result.get("subscribed", True))
+        return bool(result) if result is not None else True
 
     def move(self, vx: float, vy: float, vyaw: float) -> bool:
         """Continuous body velocity twist in m/s and rad/s."""
@@ -306,12 +320,13 @@ class PollenRobotdClient:
         return self.send_request("robot.shutdown")
 
     def _send_raw(self, payload: dict[str, Any]) -> bool:
-        if self.sock is None:
-            return False
         try:
             data = (json.dumps(payload) + "\n").encode("utf-8")
             with self.send_lock:
-                self.sock.sendall(data)
+                sock = self.sock
+                if sock is None:
+                    return False
+                sock.sendall(data)
             return True
         except OSError:
             self.close()
@@ -381,14 +396,22 @@ class PollenTofClient:
                 self._reader_thread.join(timeout=0.5)
             self._reader_thread = None
 
+    MAX_BUFFER_BYTES = 1_048_576
+
     def _reader_loop(self) -> None:
         buffer = b""
-        while self._running and self.sock is not None:
+        while self._running:
+            sock = self.sock
+            if sock is None:
+                break
             try:
-                chunk = self.sock.recv(4096)
+                chunk = sock.recv(4096)
                 if not chunk:
                     break
                 buffer += chunk
+                if len(buffer) > self.MAX_BUFFER_BYTES:
+                    buffer = b""
+                    continue
 
                 while b"\n" in buffer:
                     line, buffer = buffer.split(b"\n", 1)

@@ -1,11 +1,11 @@
 [Unit]
-Description=Real-Time Quadruped Control Slice
+Description=Real-Time Microduck Bipedal Control Slice
 DefaultDependencies=no
 Before=slices.target
 
 [Slice]
-# Hard assign this cgroup exclusively to Core 4
-AllowedCPUs=4
+# Hard assign this cgroup exclusively to Core 3 (highest core on 4-core Raspberry Pi CM4)
+AllowedCPUs=3
 
 # Memory protection: prevent cgroup OOM thrashing
 MemoryHigh=512M

@@ -10,11 +10,28 @@ import re
 from dataclasses import dataclass
 from typing import Literal, Optional, Any
 
-ActionType = Literal["FETCH", "FOLLOW", "GO_TO", "STOP", "PATROL", "SIT"]
+ActionType = Literal["FETCH", "FOLLOW", "GO_TO", "STOP", "PATROL", "SIT", "QUACK", "SKILL"]
 UrgencyType = Literal["LOW", "MEDIUM", "HIGH"]
 
-VALID_ACTIONS: set[str] = {"FETCH", "FOLLOW", "GO_TO", "STOP", "PATROL", "SIT"}
+VALID_ACTIONS: set[str] = {"FETCH", "FOLLOW", "GO_TO", "STOP", "PATROL", "SIT", "QUACK", "SKILL"}
 VALID_URGENCIES: set[str] = {"LOW", "MEDIUM", "HIGH"}
+
+SKILL_ALIASES: dict[str, str] = {
+    "bow": "bow",
+    "take a bow": "bow",
+    "kick": "kick",
+    "wave": "wave",
+    "byebye": "byebye",
+    "bye-bye": "byebye",
+    "bye bye": "byebye",
+    "call": "call",
+    "karate": "karate_kicks",
+    "karate kicks": "karate_kicks",
+    "jazzwalk": "jazzwalk",
+    "jazz walk": "jazzwalk",
+    "ground pick": "ground_pick",
+    "pickup": "ground_pick",
+}
 
 
 @dataclass(frozen=True)
@@ -55,13 +72,22 @@ def parse_intent_fallback(text: str) -> ParsedIntent:
     """
     lower = text.lower().strip()
 
-    # Emergency stop check
-    if "stop" in lower or "halt" in lower or "freeze" in lower:
+    # Emergency stop check (highest priority)
+    if re.search(r"\b(stop|halt|freeze)\b", lower):
         return ParsedIntent(action="STOP", urgency="HIGH")
+
+    # Vocalization check
+    if re.search(r"\b(quack|chirp|speak)\b", lower):
+        return ParsedIntent(action="QUACK", target="quack", urgency="LOW")
+
+    # Expressive / episodic motor skills
+    for phrase, canonical in sorted(SKILL_ALIASES.items(), key=lambda kv: -len(kv[0])):
+        if re.search(rf"\b{re.escape(phrase)}\b", lower):
+            return ParsedIntent(action="SKILL", target=canonical, urgency="MEDIUM")
 
     if "fetch" in lower or "bring" in lower or "get" in lower:
         # Extract target object
-        match = re.search(r"\b(ball|stick|toy|bone|object)\b", lower)
+        match = re.search(r"\b(ball|marker|stick|toy|bone|object)\b", lower)
         target = match.group(1) if match else "ball"
         urgency = "HIGH" if "quick" in lower or "fast" in lower else "MEDIUM"
         return ParsedIntent(action="FETCH", target=target, urgency=urgency)
@@ -85,6 +111,19 @@ def parse_intent_fallback(text: str) -> ParsedIntent:
     return ParsedIntent(action="STOP", urgency="MEDIUM")
 
 
+def _extract_json_object(raw_output: str) -> dict[str, Any]:
+    """Extract and parse the first JSON object from a model generation string."""
+    raw = raw_output.strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("No JSON object found in model output")
+    parsed = json.loads(raw[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("Decoded JSON payload must be an object")
+    return parsed
+
+
 def parse_voice_command_stateless(
     model: Any,
     tokenizer: Any,
@@ -92,26 +131,49 @@ def parse_voice_command_stateless(
 ) -> ParsedIntent:
     """
     One-shot execution: Input string -> Typed Intent.
-    If model is provided, generates structured JSON via constrained decoding.
-    Otherwise, uses the deterministic fallback.
+    If model is provided, invokes it statelessly (callable or `.generate()` with tokenizer)
+    and validates the JSON output. Falls back cleanly to deterministic parsing if no model
+    is supplied or if generation/validation fails.
     """
-    if model is None or tokenizer is None:
+    if model is None:
         return parse_intent_fallback(raw_audio_text)
 
     prompt = (
         "Extract structured intent from command: '" + raw_audio_text + "'\n"
         "Output JSON only adhering to schema: "
-        '{"action": "FETCH"|"FOLLOW"|"GO_TO"|"STOP"|"PATROL"|"SIT", '
+        '{"action": "FETCH"|"FOLLOW"|"GO_TO"|"STOP"|"PATROL"|"SIT"|"QUACK"|"SKILL", '
         '"target": string|null, "urgency": "LOW"|"MEDIUM"|"HIGH"}\nJSON:'
     )
 
-    # In production with llama.cpp/ONNX Runtime with JSON grammar:
-    # output_json = model.generate(tokenizer(prompt), grammar=json_grammar)
-    output_json = '{"action": "FETCH", "target": "ball", "urgency": "MEDIUM"}'
     try:
-        data = json.loads(output_json)
+        if hasattr(model, "generate"):
+            if tokenizer is None:
+                raw_out = model.generate(prompt)
+            else:
+                encoded = tokenizer(prompt)
+                if isinstance(encoded, dict):
+                    generated = model.generate(**encoded)
+                else:
+                    generated = model.generate(encoded)
+                if hasattr(tokenizer, "decode") and not isinstance(generated, str):
+                    tokens = generated[0] if isinstance(generated, (list, tuple)) else generated
+                    raw_out = tokenizer.decode(tokens)
+                else:
+                    raw_out = generated
+        elif callable(model):
+            raw_out = model(prompt)
+        else:
+            return parse_intent_fallback(raw_audio_text)
+
+        if isinstance(raw_out, dict):
+            data = raw_out
+        elif isinstance(raw_out, str):
+            data = _extract_json_object(raw_out)
+        else:
+            return parse_intent_fallback(raw_audio_text)
+
         return ParsedIntent.from_dict(data)
-    except (json.JSONDecodeError, ValueError):
+    except Exception:
         return parse_intent_fallback(raw_audio_text)
 
 

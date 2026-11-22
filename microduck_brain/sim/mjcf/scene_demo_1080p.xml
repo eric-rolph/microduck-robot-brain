@@ -20,18 +20,13 @@
     <light pos="0.5 0.4 3.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="10 10 0.05" pos="0 0 0" type="plane" material="groundplane"/>
 
-    <!-- Prominent Red Rectangular 3D Obstacle with full rigid-body colliders -->
-    <body name="red_obstacle_box" pos="0.10 -0.12 0.035">
+    <!-- Prominent Red Rectangular 3D Obstacle directly in the initial forward path -->
+    <body name="red_obstacle_box" pos="0.10 -0.14 0.035">
       <geom name="red_box_geom" type="box" size="0.030 0.030 0.035" rgba="0.92 0.15 0.15 1.0" mass="0.5" friction="1.5 0.01 0.001" condim="4" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- Desktop marker tray (pickup location) -->
-    <body name="marker_pad" pos="0.22 0.06 0.025">
-      <geom name="pad_geom" type="box" size="0.030 0.065 0.025" rgba="0.22 0.28 0.35 0.9" friction="1.5 0.01 0.001" condim="4" contype="1" conaffinity="1"/>
-    </body>
-
-    <!-- Dry-erase marker resting horizontally on the desktop tray at pickup location -->
-    <body name="marker" pos="0.22 0.06 0.058">
+    <!-- Dry-erase marker resting horizontally directly on the tabletop floor (radius 7.8mm) -->
+    <body name="marker" pos="0.295 0.145 0.0078">
       <freejoint name="marker_free"/>
       <!-- Main white barrel (14mm diameter, 7.6cm length) -->
       <geom name="marker_barrel" type="cylinder" size="0.007 0.038" pos="0 -0.01 0" quat="0.707107 0.707107 0 0" rgba="0.95 0.95 0.95 1" mass="0.012" condim="4" friction="1.8 0.01 0.001" contype="1" conaffinity="1"/>
@@ -43,18 +38,18 @@
       <geom name="marker_plug" type="cylinder" size="0.0068 0.005" pos="0 -0.052 0" quat="0.707107 0.707107 0 0" rgba="0.3 0.3 0.3 1" mass="0.001" condim="4" friction="1.8 0.01 0.001" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- Desktop Maze Obstacle 1: Left wall partition -->
-    <body name="maze_wall_1" pos="0.30 0.24 0.04">
-      <geom name="wall_1_geom" type="box" size="0.035 0.08 0.04" material="maze_wood" mass="2.0" condim="4" contype="1" conaffinity="1"/>
+    <!-- Desktop Maze Chicane: Wall 1 (left/upper boundary) -->
+    <body name="maze_wall_1" pos="0.45 0.36 0.04">
+      <geom name="wall_1_geom" type="box" size="0.035 0.06 0.04" material="maze_wood" mass="2.0" condim="4" contype="1" conaffinity="1"/>
     </body>
 
-    <!-- Desktop Maze Obstacle 2: Right wall partition -->
-    <body name="maze_wall_2" pos="0.38 -0.08 0.04">
-      <geom name="wall_2_geom" type="box" size="0.035 0.08 0.04" material="maze_wood" mass="2.0" condim="4" contype="1" conaffinity="1"/>
+    <!-- Desktop Maze Chicane: Wall 2 (right/lower boundary) -->
+    <body name="maze_wall_2" pos="0.25 -0.10 0.04">
+      <geom name="wall_2_geom" type="box" size="0.035 0.06 0.04" material="maze_wood" mass="2.0" condim="4" contype="1" conaffinity="1"/>
     </body>
 
     <!-- Goal Receptacle: Shallow Transparent Acrylic Container -->
-    <body name="transparent_container" pos="0.18 0.33 0.00">
+    <body name="transparent_container" pos="0.34 0.21 0.00">
       <!-- Transparent base plate -->
       <geom name="container_base" type="box" size="0.060 0.090 0.003" pos="0 0 0.003" material="acrylic_glass" friction="1.5 0.01 0.001" condim="4" contype="1" conaffinity="1"/>
       <!-- Low transparent perimeter rims (12mm high) -->

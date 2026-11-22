@@ -18,8 +18,8 @@ CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=99
 CPUSchedulingResetOnFork=true
 
-# CPU pinning: Core 4 dedicated to 50-100 Hz motor control loop
-CPUAffinity=4
+# CPU pinning: Core 3 dedicated to 50-100 Hz motor control loop on 4-core Raspberry Pi CM4 (cores 0-3)
+CPUAffinity=3
 
 # Memory locking: removes limits so mlockall() succeeds and prevents page fault jitter
 LimitMEMLOCK=infinity

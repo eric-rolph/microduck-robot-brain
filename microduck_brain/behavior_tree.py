@@ -121,6 +121,42 @@ class SelectorNode(BehaviorNode):
         self.current_idx = 0
 
 
+class ReactiveSelectorNode(BehaviorNode):
+    """
+    Reactive priority fallback composite node.
+    Re-evaluates children from index 0 every tick so higher-priority branches
+    preempt lower-priority RUNNING branches as soon as world state changes.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        blackboard: Optional[Blackboard],
+        children: List[BehaviorNode],
+    ) -> None:
+        super().__init__(name, blackboard)
+        self.children = children
+        self.active_idx: Optional[int] = None
+
+    def tick(self, world_state: Mapping[str, Any]) -> SkillStatus:
+        for idx, child in enumerate(self.children):
+            status = child.tick(world_state)
+            if status in (SkillStatus.RUNNING, SkillStatus.SUCCESS):
+                if self.active_idx is not None and self.active_idx != idx:
+                    self.children[self.active_idx].abort()
+                self.active_idx = idx if status == SkillStatus.RUNNING else None
+                return status
+        if self.active_idx is not None:
+            self.children[self.active_idx].abort()
+            self.active_idx = None
+        return SkillStatus.FAILURE
+
+    def abort(self) -> None:
+        if self.active_idx is not None:
+            self.children[self.active_idx].abort()
+            self.active_idx = None
+
+
 class AsymmetricParallelNode(BehaviorNode):
     """
     Ticks all children concurrently each cycle.
@@ -457,7 +493,10 @@ class MocapMotionActionNode(BehaviorNode):
             self.player.start()
             self.started = True
 
-        done, joint_targets = self.player.step()
+        try:
+            done, joint_targets = self.player.step(world_state)
+        except TypeError:
+            done, joint_targets = self.player.step()
         if self.joint_callback is not None:
             self.joint_callback(joint_targets)
 

@@ -12,26 +12,17 @@ from typing import Any
 import mujoco
 import numpy as np
 
+from microduck_brain.reactor_onnx_compiler import OFFICIAL_DEFAULT_POSE
 from microduck_brain.sim.backlash import BacklashManager
 from microduck_brain.sim.bam_actuator import BamM6ActuatorModel, BamM6Config
+from microduck_brain.sim.exact_bam_plant import (
+    BAM_STIFF_SOLIMP_FRICTION,
+    BAM_STIFF_SOLREF_FRICTION,
+    XL330_M6_PARAMS,
+)
 
-# Default STAND2 pose (HOME_FRAME)
-DEFAULT_POSE = np.array([
-    0.0,      # left_hip_yaw
-    -0.0873,  # left_hip_roll
-    -0.4579,  # left_hip_pitch
-    -0.0049,  # left_knee
-    0.4530,   # left_ankle
-    0.3491,   # neck_pitch
-    0.3491,   # head_pitch
-    0.0,      # head_yaw
-    0.0,      # head_roll
-    0.0,      # right_hip_yaw
-    0.0873,   # right_hip_roll
-    0.4579,   # right_hip_pitch
-    0.0049,   # right_knee
-    -0.4530,  # right_ankle
-], dtype=np.float32)
+# Default STAND2 pose (HOME_FRAME), exact 7-decimal official contract
+DEFAULT_POSE = OFFICIAL_DEFAULT_POSE.copy()
 
 
 def quat_rotate_inverse(quat: np.ndarray, vec: np.ndarray) -> np.ndarray:
@@ -52,9 +43,11 @@ class MicroduckMuJoCoEnv:
         action_scale: float = 1.0,
         decimation: int = 4,
         bam_config: BamM6Config | None = None,
+        use_exact_bam: bool = False,
     ) -> None:
         self.action_scale = action_scale
         self.decimation = decimation
+        self.use_exact_bam = bool(use_exact_bam)
 
         if xml_path is None:
             base_dir = Path(__file__).parent / "mjcf"
@@ -62,12 +55,46 @@ class MicroduckMuJoCoEnv:
             xml_path = base_dir / filename
 
         self.xml_path = str(xml_path)
-        self.model = mujoco.MjModel.from_xml_path(self.xml_path)
+        if self.use_exact_bam:
+            p = XL330_M6_PARAMS
+            force_limit = p["vin"] * p["kt"] / p["R"]
+            spec = mujoco.MjSpec.from_file(self.xml_path)
+            for act in spec.actuators:
+                tgt = act.target
+                tgt_name = tgt.name if hasattr(tgt, "name") else str(tgt)
+                if tgt_name.startswith("passive_"):
+                    continue
+                act.set_to_motor()
+                act.forcelimited = True
+                act.forcerange = (-force_limit, force_limit)
+                act.ctrllimited = False
+                act.gear = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+                for joint in spec.joints:
+                    if joint.name == tgt_name:
+                        joint.damping = np.zeros((3, 1))
+                        joint.frictionloss = 0.0
+                        joint.solref_friction = BAM_STIFF_SOLREF_FRICTION
+                        joint.solimp_friction = BAM_STIFF_SOLIMP_FRICTION
+                        break
+            self.model = spec.compile()
+        else:
+            self.model = mujoco.MjModel.from_xml_path(self.xml_path)
         self.model.opt.timestep = 0.005
         self.data = mujoco.MjData(self.model)
 
         # Backlash twin manager
         self.backlash_mgr = BacklashManager(self.model)
+        self._servo_dof_adr = np.array(self.backlash_mgr.servo_qvel_adr, dtype=np.int64)
+        self._servo_qpos_adr = np.array(self.backlash_mgr.servo_qpos_adr, dtype=np.int64)
+        self._servo_joint_idx = np.array(
+            [int(self.model.actuator_trnid[i, 0]) for i in range(self.model.nu)], dtype=np.int64
+        )
+        self._exact_lookup = np.full(int(max(self.model.njnt, self.model.nv)) + 1, -1)
+        self._exact_lookup[self._servo_joint_idx] = np.arange(self.model.nu)
+        self._friction_dof_type = mujoco.mjtConstraint.mjCNSTR_FRICTION_DOF.value
+        if self.use_exact_bam:
+            self.model.dof_armature[self._servo_dof_adr] = XL330_M6_PARAMS["armature"]
+            mujoco.mj_setConst(self.model, self.data)
 
         # BAM M6 actuator model
         self.bam = BamM6ActuatorModel(num_actuators=self.model.nu, config=bam_config)
@@ -228,11 +255,17 @@ class MicroduckMuJoCoEnv:
             for i, adr in enumerate(self.backlash_mgr.servo_qpos_adr):
                 self.data.qpos[adr] += noise[i]
 
-        mujoco.mj_forward(self.model, self.data)
-
-        # Settle robot onto ground plane in nominal STAND pose
-        for _ in range(20):
-            mujoco.mj_step(self.model, self.data)
+        if self.use_exact_bam:
+            self.data.qvel[:] = 0.0
+            self.data.ctrl[:] = 0.0
+            self.model.dof_frictionloss[self._servo_dof_adr] = 0.0
+            self.model.dof_damping[self._servo_dof_adr] = 0.0
+            mujoco.mj_forward(self.model, self.data)
+        else:
+            mujoco.mj_forward(self.model, self.data)
+            # Settle robot onto ground plane in nominal STAND pose
+            for _ in range(20):
+                mujoco.mj_step(self.model, self.data)
 
         # Reset BAM M6 internal state
         self.bam.reset(initial_targets=DEFAULT_POSE[: self.model.nu])
@@ -261,13 +294,17 @@ class MicroduckMuJoCoEnv:
     def is_terminated(self) -> bool:
         """Check for fall, ground strike, or height collapse."""
         trunk_z = min(float(self.data.qpos[2]), float(self.data.xpos[self.trunk_body_id][2]))
-        # Standing height is ~0.12 m. Drop below 0.060 m is a collapse.
-        if trunk_z < 0.060:
+        # Standing height is ~0.12 m. Drop below 0.060 m (or 0.045 m during intentional crouch) is a collapse.
+        min_trunk_z = 0.045 if self.allow_mouth_contact else 0.060
+        if trunk_z < min_trunk_z:
             return True
 
         proj_grav = self.get_projected_gravity()
         # If gravity z > -0.50, robot has tilted > 60 degrees (unrecoverable fall)
-        if proj_grav[2] > -0.50:
+        # Note: during intentional ground retrieval and carrying (allow_mouth_contact=True),
+        # forward bow pitch up to ~104 degrees (proj_grav[2] up to 0.25) is permitted for deep floor reach
+        tilt_limit = 0.25 if self.allow_mouth_contact else -0.50
+        if proj_grav[2] > tilt_limit:
             return True
 
         # Check for non-foot collision (knees, head, trunk hitting floor)
@@ -373,19 +410,56 @@ class MicroduckMuJoCoEnv:
 
         # Run decimated sub-steps
         for _ in range(self.decimation):
-            q_enc = self.backlash_mgr.read_encoder_positions(self.data)
-            v_enc = self.backlash_mgr.read_encoder_velocities(self.data)
+            if self.use_exact_bam:
+                p = XL330_M6_PARAMS
+                q_s = self.data.qpos[self._servo_qpos_adr]
+                dq_s = self.data.qvel[self._servo_dof_adr]
+                duty = np.clip((delayed_targets - q_s) * p["kp_fw"] * p["error_gain"], -p["max_pwm"], p["max_pwm"])
+                volts = p["vin"] * duty
+                torque = p["kt"] * volts / p["R"] - (p["kt"] ** 2) * dq_s / p["R"]
+                self.data.ctrl[:] = torque
+                self.bam.last_torques = torque.astype(np.float32)
+                self.bam.update_battery_voltage(torque)
 
-            # BAM M6 computes motor torques & updates dynamic voltage/back-EMF limits
-            torques = self.bam.compute_torques(delayed_targets, q_enc, v_enc, advance_delay=False)
+                te = -self.data.qfrc_bias[self._servo_dof_adr] + self.data.qfrc_constraint[self._servo_dof_adr]
+                ff = np.zeros(self.model.nu, dtype=np.float64)
+                if len(self.data.efc_id):
+                    rows = np.flatnonzero(self.data.efc_type == self._friction_dof_type)
+                    if len(rows):
+                        ids = self.data.efc_id[rows]
+                        ok = ids < len(self._exact_lookup)
+                        which = self._exact_lookup[ids[ok]]
+                        sel = which >= 0
+                        np.add.at(ff, which[sel], self.data.efc_force[rows[ok][sel]])
+                te -= ff
+                mt = self.data.qfrc_actuator[self._servo_dof_adr]
+                gt = np.abs(te * p["load_friction_external"] - mt * p["load_friction_motor"])
+                gts = np.abs(te * p["load_friction_external_stribeck"] - mt * p["load_friction_motor_stribeck"])
+                sc = np.exp(-(np.abs(dq_s / p["dtheta_stribeck"]) ** p["alpha"]))
+                fl = p["friction_base"] + gt + sc * p["friction_stribeck"] + gts * sc
+                eq = np.sign(te) != np.sign(mt)
+                g2m = p["load_friction_external_quad"] * (np.abs(te) ** 2)
+                g2e = p["load_friction_motor_quad"] * (np.abs(mt) ** 2)
+                fl += sc * ((np.abs(te) < np.abs(mt)) * g2m + (np.abs(te) > np.abs(mt)) * g2e) * eq
+                self.model.dof_frictionloss[self._servo_dof_adr] = fl
+                self.model.dof_damping[self._servo_dof_adr] = p["friction_viscous"]
+            else:
+                q_enc = self.backlash_mgr.read_encoder_positions(self.data)
+                v_enc = self.backlash_mgr.read_encoder_velocities(self.data)
 
-            # Actuator force coupling: enforce BAM dynamic torque limits on MuJoCo solver
-            dynamic_limits = self.bam.last_torque_limits
-            self.model.actuator_forcerange[:, 0] = -dynamic_limits
-            self.model.actuator_forcerange[:, 1] = dynamic_limits
+                # BAM M6 computes motor torques, battery sag, and dynamic back-EMF limits
+                self.bam.compute_torques(delayed_targets, q_enc, v_enc, advance_delay=False)
 
-            # Apply setpoints
-            self.data.ctrl[:] = delayed_targets
+                # Couple BAM dynamic voltage-sag / back-EMF torque limits into MuJoCo's
+                # position actuators while preserving the XML's calibrated chosen_actuator
+                # back-EMF damping (0.053) and baseline frictionloss (0.0048). For full
+                # Stribeck + load-dependent XL330 M6 torque dynamics, set use_exact_bam=True.
+                dynamic_limits = self.bam.last_torque_limits
+                self.model.actuator_forcerange[:, 0] = -dynamic_limits
+                self.model.actuator_forcerange[:, 1] = dynamic_limits
+
+                # Apply position setpoints to position actuators
+                self.data.ctrl[:] = delayed_targets
 
             mujoco.mj_step(self.model, self.data)
 

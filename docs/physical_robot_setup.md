@@ -52,7 +52,7 @@ DuckBrain runs directly on the Raspberry Pi CM4 alongside `robotd`.
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate
-   pip install -r requirements.txt
+   pip install -e .
    ```
 
 3. Run pre-flight hardware diagnostics:
@@ -116,11 +116,13 @@ In interactive mode (`--interactive`), you can issue commands directly at the co
 
 | Command | Action |
 |---|---|
-| `come` / `follow` | Enters approach loop, tracks target while avoiding close obstacles |
-| `fetch ball` | Scans for ball, approaches target, executes `ground_pick` skill, quacks on success |
+| `come` / `follow` | Enters reactive BT approach loop with balance-gated ambient head scan |
+| `fetch ball` | Reactive BT selector: scans -> approaches -> triggers `ground_pick` skill & quacks |
+| `bow` / `kick` | Stops locomotion and dispatches verified episodic ONNX skill via `robot.do` |
 | `sit` | Triggers Pollen `sit_toggle` episodic skill |
 | `quack` | Plays duck sound through speaker |
 | `stop` / `halt` | Deterministic hard emergency stop (zeros all velocities immediately) |
+| `wait` | Returns to idle balance-gated ambient head scan |
 | `status` | Prints live battery voltage, stability trigger, roughness, and forward clearance |
 | `exit` | Stops robot and terminates cleanly |
 
@@ -128,4 +130,4 @@ In interactive mode (`--interactive`), you can issue commands directly at the co
 
 - **Brownout protection**: Monitored through a dual-threshold Schmitt trigger (6.5V low, 6.8V high). If bus voltage sags below 6.5V under load, locomotion is halted immediately.
 - **Fall detector**: When `safety.fallen` is reported by the IMU or roll/pitch exceeds 45 degrees, the behavior tree aborts active plans and drops to zero velocity.
-- **CPU core isolation**: On the CM4, `systemd/robotd.service` binds the motor loop to Core 4 with FIFO real-time priority (`CPUAffinity=4`, `Nice=-20`). DuckBrain runs on Cores 2-3 (`CPUAffinity=2,3`, `Nice=-5`), guaranteeing inference spikes never induce servo communication jitter.
+- **CPU core isolation**: On the 4-core Raspberry Pi CM4 (cores 0–3), `systemd/robotd.service` binds the motor loop to Core 3 with FIFO real-time priority (`CPUAffinity=3`, `CPUSchedulingPolicy=fifo`, `CPUSchedulingPriority=99`), OS housekeeping uses Core 0–2 (`10-cpu-affinity.conf`), and DuckBrain runs on Cores 1–2 (`CPUAffinity=1,2`, `Nice=-5`), guaranteeing inference spikes never induce servo communication jitter.

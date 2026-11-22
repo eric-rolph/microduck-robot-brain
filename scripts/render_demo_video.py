@@ -1,11 +1,17 @@
 """1080P Full HD Demo Video Generator for Microduck Robot Brain.
 
-Executes a 100% physically grounded multi-task autonomous mission in MuJoCo:
+Note on scope: this script renders a deterministic, scripted timeline + HUD
+visualization video for presentation purposes (using a scripted kinematic beak
+grasp + MuJoCo weld equality and ground-truth segmentation in HeadCamera).
+For autonomous closed-loop evaluation see `scripts/run_brain_eval_suite.py`
+and `tests/test_reactor_skills_e2e.py`.
+
+Visualized mission sequence:
 1. Speech intent parsing & multi-zone 8x8 ToF environmental scan.
-2. Ground approach & physical red obstacle avoidance (zero foot warping).
-3. Articulated beak clamping & dynamic payload lift with center-of-mass balancing.
-4. Desktop maze chicane navigation using real-time ToF obstacle proximity steering.
-5. Receptacle arrival & marker drop-off into a shallow transparent acrylic container under real gravity.
+2. Ground approach & physical red obstacle avoidance.
+3. Articulated beak clamping & payload lift.
+4. Desktop maze chicane navigation.
+5. Receptacle arrival & marker drop-off into a shallow transparent acrylic container.
 6. Celebratory inquisitive head tilt, cheerful quack, and seated rest.
 """
 

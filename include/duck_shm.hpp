@@ -5,6 +5,7 @@
 #include <cstring>
 
 #define MICRODUCK_SHM_NAME "/microduck_ipc_shm"
+constexpr int MICRODUCK_NUM_DOFS = 14;
 
 // Command payload: BehaviorTree -> robotd
 struct alignas(64) MotionCommand {
@@ -17,13 +18,13 @@ struct alignas(64) MotionCommand {
     uint64_t timestamp_ns{0};  // Watchdog timestamp
 };
 
-// State payload: robotd -> BehaviorTree
+// State payload: robotd -> BehaviorTree (matches 14-DOF Microduck contract)
 struct alignas(64) RobotFeedback {
     float projected_gravity[3]{0.0f, 0.0f, -1.0f};
     float base_lin_vel[3]{0.0f};
     float base_ang_vel[3]{0.0f};
-    float joint_pos[12]{0.0f};
-    float joint_vel[12]{0.0f};
+    float joint_pos[MICRODUCK_NUM_DOFS]{0.0f};
+    float joint_vel[MICRODUCK_NUM_DOFS]{0.0f};
     uint8_t stability_state{0}; // 0 = HIGH, 1 = MEDIUM, 2 = LOW
     uint8_t roughness_state{0}; // 0 = LOW, 1 = MEDIUM, 2 = HIGH
     uint64_t timestamp_ns{0};
@@ -55,6 +56,7 @@ struct alignas(64) SeqLockChannel {
         do {
             s1 = sequence.load(std::memory_order_acquire);
             if (s1 & 1) { // Writer currently updating
+                retries++;
                 continue;
             }
             std::atomic_thread_fence(std::memory_order_acquire);

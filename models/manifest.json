@@ -9,11 +9,13 @@
     "servos": "xl330",
     "control_hz": 50
   },
-  "description": "The policy set a microduck ships with: walking, standing, and the one-shots its buttons run.",
+  "description": "The policy set a microduck ships with: walking, standing, ReActor physics-aware motion skills, and the one-shots its buttons run.",
   "policies": [
-    { "file": "alpha_walking.onnx", "kind": "perpetual" },
-    { "file": "alpha_stand.onnx",   "kind": "perpetual" },
-    { "file": "roller.onnx",        "kind": "perpetual", "mode": "roller", "action_scale": 0.8 },
+    { "file": "alpha_walking.onnx",      "kind": "perpetual" },
+    { "file": "BEST_alpha_walking.onnx", "name": "walk", "kind": "perpetual" },
+    { "file": "alpha_stand.onnx",        "kind": "perpetual" },
+    { "file": "BEST_alpha_stand.onnx",   "name": "stand_recovery", "kind": "perpetual" },
+    { "file": "roller.onnx",             "kind": "perpetual", "mode": "roller", "action_scale": 0.8 },
 
     { "file": "alpha_sitstand.onnx", "name": "sitstand", "kind": "scripted",
       "command": { "encoding": "posture_flag", "slot": "twist.vx", "sit": 1.0, "stand": 0.0, "idle": [0.0, 0.0, 0.0] },
@@ -27,6 +29,54 @@
 
     { "file": "roulade.onnx",         "kind": "episodic", "duration_s": 1.0, "chain": true },
     { "file": "ball_kick_left.onnx",  "name": "kick_left",  "kind": "episodic", "duration_s": 0.5 },
-    { "file": "ball_kick_right.onnx", "name": "kick_right", "kind": "episodic", "duration_s": 0.5 }
+    { "file": "ball_kick_right.onnx", "name": "kick_right", "kind": "episodic", "duration_s": 0.5 },
+
+    { "file": "bow.onnx", "name": "bow", "kind": "episodic", "duration_s": 9.56, "frames": 479,
+      "contract": "official61",
+      "status": "provisional_verified_motion",
+      "fidelity_note": "selected2500 residual61: 20.7deg bow, 0 nominal falls, 18/29 tuning joint passes; held-out pending",
+      "command": { "encoding": "microduck_finite_phase_fourier_v1", "active": 1.0 } },
+
+    { "file": "bow_walk_entry.onnx", "name": "bow_walk_entry", "kind": "episodic", "duration_s": 4.56, "frames": 229,
+      "contract": "official61",
+      "status": "provisional_verified_motion",
+      "fidelity_note": "robust_v3 walk-entry bow: 14.2deg bow, 0 nominal falls; push recovery in-bow remains open",
+      "command": { "encoding": "microduck_finite_phase_v1" } },
+
+    { "file": "kick.onnx", "name": "kick", "kind": "episodic", "duration_s": 12.96, "frames": 649,
+      "contract": "official61",
+      "status": "provisional_verified_motion",
+      "fidelity_note": "M_ShortMove13 C@3500: 89.2mm right-foot kicks, P1 pass; fails P1x1.5/v1 hardware/latency",
+      "command": { "encoding": "microduck_finite_phase_fourier_v1", "active": 1.0 } },
+
+    { "file": "wave.onnx", "name": "wave", "kind": "episodic", "duration_s": 12.28, "frames": 615,
+      "contract": "official61",
+      "status": "experimental_failing_fidelity",
+      "fidelity_note": "GPU round-1 absolute policy: 0/40 P1, 0.50 recall, 0.55 energy ratio (under-moves; retrain with residual61)",
+      "command": { "encoding": "microduck_finite_phase_fourier_v1", "active": 1.0 } },
+
+    { "file": "byebye.onnx", "name": "byebye", "kind": "episodic", "duration_s": 12.28, "frames": 615,
+      "contract": "official61",
+      "status": "experimental_failing_fidelity",
+      "fidelity_note": "Alias of wave.onnx: GPU round-1 absolute policy under-moves (0/40 P1)",
+      "command": { "encoding": "microduck_finite_phase_fourier_v1", "active": 1.0 } },
+
+    { "file": "call.onnx", "name": "call", "kind": "episodic", "duration_s": 10.66, "frames": 534,
+      "contract": "official61",
+      "status": "experimental_failing_fidelity",
+      "fidelity_note": "GPU round-1 absolute policy: 0/40 P1, 0.77 energy ratio (under-moves; retrain with residual61)",
+      "command": { "encoding": "microduck_finite_phase_fourier_v1", "active": 1.0 } },
+
+    { "file": "karate_kicks.onnx", "name": "karate_kicks", "kind": "episodic", "duration_s": 13.96, "frames": 699,
+      "contract": "official61",
+      "status": "experimental_failing_fidelity",
+      "fidelity_note": "GPU round-1 wheels policy stands in place (0/40 P1, 2.4mm/13.8mm foot z; needs 2-stage ReActor)",
+      "command": { "encoding": "microduck_finite_phase_fourier_v1", "active": 1.0 } },
+
+    { "file": "jazzwalk.onnx", "name": "jazzwalk", "kind": "episodic", "duration_s": 15.60, "frames": 781,
+      "contract": "official61",
+      "status": "experimental_failing_fidelity",
+      "fidelity_note": "GPU round-1 wheels policy stands in place (0/40 P1, 3.4mm/11.0mm foot z; needs 2-stage ReActor)",
+      "command": { "encoding": "microduck_finite_phase_fourier_v1", "active": 1.0 } }
   ]
 }
