@@ -1010,26 +1010,31 @@ wheels = [
 
 [[package]]
 name = "microduck-brain"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "mujoco" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "onnx" },
     { name = "onnxruntime" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "torch" },
 ]
 
 [package.optional-dependencies]
 dev = [
     { name = "matplotlib" },
+    { name = "mujoco" },
+    { name = "onnx" },
     { name = "psutil" },
     { name = "pytest" },
     { name = "supervision" },
+    { name = "torch" },
     { name = "trackers" },
+]
+sim = [
+    { name = "mujoco" },
+    { name = "onnx" },
+    { name = "torch" },
 ]
 vision = [
     { name = "supervision" },
@@ -1039,20 +1044,23 @@ vision = [
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.7.0" },
-    { name = "mujoco", specifier = ">=3.0.0" },
+    { name = "mujoco", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.0.0" },
     { name = "numpy", specifier = ">=1.24.0" },
-    { name = "onnx", specifier = ">=1.15.0" },
+    { name = "onnx", marker = "extra == 'dev'", specifier = ">=1.15.0" },
+    { name = "onnx", marker = "extra == 'sim'", specifier = ">=1.15.0" },
     { name = "onnxruntime", specifier = ">=1.15.0" },
     { name = "psutil", marker = "extra == 'dev'", specifier = ">=5.9.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "scipy", specifier = ">=1.11.0" },
     { name = "supervision", marker = "extra == 'dev'", specifier = ">=0.25.0" },
     { name = "supervision", marker = "extra == 'vision'", specifier = ">=0.25.0" },
-    { name = "torch", specifier = ">=2.0.0" },
+    { name = "torch", marker = "extra == 'dev'", specifier = ">=2.0.0" },
+    { name = "torch", marker = "extra == 'sim'", specifier = ">=2.0.0" },
     { name = "trackers", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "trackers", marker = "extra == 'vision'", specifier = ">=2.0.0" },
 ]
-provides-extras = ["vision", "dev"]
+provides-extras = ["sim", "vision", "dev"]
 
 [[package]]
 name = "ml-dtypes"

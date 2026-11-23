@@ -7,7 +7,7 @@ to eliminate sensor noise and token flickering.
 from __future__ import annotations
 from collections import deque
 import math
-from typing import Literal
+from typing import Any, Literal, Optional
 
 StateLevel = Literal["LOW", "MEDIUM", "HIGH"]
 
@@ -139,6 +139,11 @@ class WorldState:
         self.visual_range_m: float = 1.0
         self.visual_track_id: int | None = None
 
+        # Latest 8x8 ToF depth matrix (mm) for live dashboard telemetry
+        self.tof_rows: int = 8
+        self.tof_cols: int = 8
+        self.tof_grid: list[int] = [2000] * 64
+
     def update_orientation(self, roll: float, pitch: float) -> StateLevel:
         """Update stability from roll/pitch deviation."""
         deviation = math.sqrt(roll**2 + pitch**2)
@@ -202,6 +207,9 @@ class WorldState:
         cols = int(tof.get("cols", 8))
 
         if len(distance_mm) == rows * cols and rows >= 4 and cols >= 4:
+            self.tof_rows = rows
+            self.tof_cols = cols
+            self.tof_grid = [int(d) for d in distance_mm]
             # Extract central 4x4 matrix for forward obstacle gating
             valid_depths_m: list[float] = []
             for r in range(rows // 4, (3 * rows) // 4):
@@ -227,12 +235,12 @@ class WorldState:
         track_id: Optional[int] = None,
     ) -> None:
         """Update visual tracking state from vision tracker."""
-        self.target_locked = bool(target_locked)
+        locked = bool(target_locked)
+        self.target_locked = locked
         self.visual_bearing_rad = float(bearing_rad)
         self.visual_range_m = float(range_m)
         self.visual_track_id = track_id
-        if target_locked:
-            self.update_ball_visible(True)
+        self.update_ball_visible(locked)
 
     def to_dict(self) -> dict[str, Any]:
         """Export sanitized predicate dictionary for Behavior Tree ticks."""
@@ -253,4 +261,7 @@ class WorldState:
             "visual_bearing_rad": self.visual_bearing_rad,
             "visual_range_m": self.visual_range_m,
             "visual_track_id": self.visual_track_id,
+            "tof_rows": self.tof_rows,
+            "tof_cols": self.tof_cols,
+            "tof_grid": list(self.tof_grid),
         }

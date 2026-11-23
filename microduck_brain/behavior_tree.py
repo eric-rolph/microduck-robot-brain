@@ -476,7 +476,7 @@ class MocapMotionActionNode(BehaviorNode):
         name: str,
         mocap_player: Any,
         blackboard: Optional[Blackboard] = None,
-        joint_callback: Optional[Callable[[np.ndarray], None]] = None,
+        joint_callback: Optional[Callable[[Any], None]] = None,
     ) -> None:
         super().__init__(name, blackboard)
         self.player = mocap_player
@@ -571,11 +571,11 @@ class VisualTrackApproachNode(BehaviorNode):
                 self.velocity_callback(0.0, 0.0, 0.0)
             return SkillStatus.SUCCESS
 
-        wz = float(np.clip(-0.75 * bearing, -0.15, 0.15))
+        wz = max(-0.15, min(0.15, -0.75 * bearing))
         if abs(bearing) > 0.40:
             vx = 0.0
         else:
-            vx = float(np.clip(0.30 * (dist - self.target_range_m), 0.0, 0.08))
+            vx = max(0.0, min(0.08, 0.30 * (dist - self.target_range_m)))
 
         if self.velocity_callback is not None:
             self.velocity_callback(vx, 0.0, wz)

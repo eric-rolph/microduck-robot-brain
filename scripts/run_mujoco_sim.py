@@ -121,6 +121,9 @@ def run_simulation(
     onnx_path: str | Path | None = None,
     headless: bool = True,
     render: bool = False,
+    dashboard: bool = False,
+    dashboard_host: str = "127.0.0.1",
+    dashboard_port: int = 8765,
 ) -> dict[str, float]:
     """Run DuckBrain behavior loop inside MuJoCo physics."""
     print(f"Initializing Microduck MuJoCo simulation (steps={steps})...")
@@ -151,6 +154,30 @@ def run_simulation(
     trunk_heights: list[float] = []
     tree_statuses: list[str] = []
 
+    dash_state: dict[str, Any] = {
+        "timestamp": time.time(),
+        "mode": "mujoco-sim",
+        "dry_run": True,
+        "running": True,
+        "ticks": 0,
+        "active_intent": "FETCH",
+        "active_target": "ball",
+        "active_node": "Search",
+        "cmd": {"vx": 0.0, "vy": 0.0, "vyaw": 0.0},
+        "head_trim_rad": [0.0, 0.0],
+        "world_state": world_state.to_dict(),
+        "events": [{"ts": round(time.time(), 2), "kind": "sim", "message": "MuJoCo 50 Hz session started"}],
+    }
+    dash_server = None
+    if dashboard:
+        from microduck_brain.dashboard import DashboardServer
+        dash_server = DashboardServer(
+            snapshot_fn=lambda: dict(dash_state),
+            host=dashboard_host,
+            port=dashboard_port,
+        )
+        print(f"[DuckBrain] Live simulation telemetry cockpit running at {dash_server.start()}")
+
     # Optional viewer
     viewer = None
     if render and not headless:
@@ -158,55 +185,70 @@ def run_simulation(
         viewer = mujoco.viewer.launch_passive(env.model, env.data)
 
     print("Executing Behavior Tree driven simulation loop at 50 Hz...")
-    for step in range(steps):
-        t_start = time.perf_counter()
+    try:
+        for step in range(steps):
+            t_start = time.perf_counter()
 
-        # 1. Update world state from MuJoCo sensor data
-        proj_grav = obs[3:6]
-        world_state.update_orientation(roll=float(proj_grav[1]), pitch=float(proj_grav[0]))
-        current_ws = world_state.to_dict()
+            # 1. Update world state from MuJoCo sensor data
+            proj_grav = obs[3:6]
+            world_state.update_orientation(roll=float(proj_grav[1]), pitch=float(proj_grav[0]))
+            current_ws = world_state.to_dict()
 
-        # 2. Tick Behavior Tree at 50 Hz
-        bt_status = tree.tick(current_ws)
-        tree_statuses.append(bt_status.name)
+            # 2. Tick Behavior Tree at 50 Hz
+            bt_status = tree.tick(current_ws)
+            tree_statuses.append(bt_status.name)
 
-        # 3. Extract motion commands from Blackboard
-        vx, vy, wz = bb.data.get("twist_cmd", (0.0, 0.0, 0.0))
-        head_cmd = np.array(bb.data.get("head_cmd", (0.0, 0.0, 0.0, 0.0)), dtype=np.float32)
-        body_cmd = np.array(bb.data.get("body_cmd", (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)), dtype=np.float32)
+            # 3. Extract motion commands from Blackboard
+            vx, vy, wz = bb.data.get("twist_cmd", (0.0, 0.0, 0.0))
+            head_cmd = np.array(bb.data.get("head_cmd", (0.0, 0.0, 0.0, 0.0)), dtype=np.float32)
+            body_cmd = np.array(bb.data.get("body_cmd", (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)), dtype=np.float32)
 
-        env.set_command(
-            lin_vel_x=vx,
-            lin_vel_y=vy,
-            ang_vel_z=wz,
-            head_pose=head_cmd,
-            body_pose=body_cmd,
-        )
+            env.set_command(
+                lin_vel_x=vx,
+                lin_vel_y=vy,
+                ang_vel_z=wz,
+                head_pose=head_cmd,
+                body_pose=body_cmd,
+            )
 
-        # 4. Policy inference
-        if ort_session is not None:
-            batch_obs = obs.reshape(1, -1).astype(np.float32)
-            raw_action = ort_session.run([output_name], {input_name: batch_obs})[0]
-            action = raw_action.squeeze(0).astype(np.float32)
-        else:
-            action = np.zeros(14, dtype=np.float32)
+            # 4. Policy inference
+            if ort_session is not None:
+                batch_obs = obs.reshape(1, -1).astype(np.float32)
+                raw_action = ort_session.run([output_name], {input_name: batch_obs})[0]
+                action = raw_action.squeeze(0).astype(np.float32)
+            else:
+                action = np.zeros(14, dtype=np.float32)
 
-        # 5. Step physics (10 sub-steps through BAM M6 and backlash)
-        obs, reward, terminated, truncated, info = env.step(action)
+            # 5. Step physics (10 sub-steps through BAM M6 and backlash)
+            obs, reward, terminated, truncated, info = env.step(action)
 
-        t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
-        step_latencies.append(t_elapsed_ms)
-        battery_voltages.append(info["battery_voltage"])
-        trunk_heights.append(info["trunk_height"])
+            t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            step_latencies.append(t_elapsed_ms)
+            battery_voltages.append(info["battery_voltage"])
+            trunk_heights.append(info["trunk_height"])
+            world_state.update_battery_voltage(info["battery_voltage"])
+            active_child = tree.children[min(tree.current_idx, len(tree.children) - 1)].name
+            dash_state.update({
+                "timestamp": time.time(),
+                "ticks": step + 1,
+                "active_node": active_child,
+                "cmd": {"vx": float(vx), "vy": float(vy), "vyaw": float(wz)},
+                "world_state": world_state.to_dict(),
+            })
 
-        # 6. Update viewer if active
-        if viewer is not None and viewer.is_running():
-            viewer.sync()
-            time.sleep(max(0.0, 0.02 - (t_elapsed_ms / 1000.0)))
+            # 6. Update viewer if active
+            if viewer is not None and viewer.is_running():
+                viewer.sync()
+                time.sleep(max(0.0, 0.02 - (t_elapsed_ms / 1000.0)))
+            elif dash_server is not None:
+                time.sleep(max(0.0, 0.02 - (t_elapsed_ms / 1000.0)))
 
-        if terminated:
-            print(f"Simulation terminated: robot fell at step {step}")
-            break
+            if terminated:
+                print(f"Simulation terminated: robot fell at step {step}")
+                break
+    finally:
+        if dash_server is not None:
+            dash_server.stop()
 
     summary = {
         "completed_steps": len(step_latencies),
@@ -235,6 +277,9 @@ def main() -> None:
     parser.add_argument("--onnx", type=str, default="models/microduck_walk.onnx", help="Path to ONNX policy")
     parser.add_argument("--headless", action="store_true", default=True, help="Run without rendering window")
     parser.add_argument("--render", action="store_true", help="Launch MuJoCo interactive viewer")
+    parser.add_argument("--dashboard", action="store_true", help="Launch live web telemetry cockpit")
+    parser.add_argument("--dashboard-host", default="127.0.0.1", help="Dashboard bind host")
+    parser.add_argument("--dashboard-port", type=int, default=8765, help="Dashboard HTTP port")
     args = parser.parse_args()
 
     run_simulation(
@@ -242,6 +287,9 @@ def main() -> None:
         onnx_path=args.onnx,
         headless=not args.render,
         render=args.render,
+        dashboard=args.dashboard,
+        dashboard_host=args.dashboard_host,
+        dashboard_port=args.dashboard_port,
     )
 
 

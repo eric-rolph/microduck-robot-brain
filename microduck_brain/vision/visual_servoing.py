@@ -6,8 +6,11 @@ for the neural walking policy.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
 import numpy as np
-from microduck_brain.vision.tracker import VisualTrackState
+
+if TYPE_CHECKING:
+    from microduck_brain.vision.tracker import VisualTrackState
 
 
 class VisualServoingController:
@@ -29,7 +32,7 @@ class VisualServoingController:
 
     def compute_commands(
         self,
-        track_state: VisualTrackState,
+        track_state: VisualTrackState | Any,
     ) -> tuple[float, float, bool]:
         """Compute (cmd_vx, cmd_wz, target_reached) from current visual track state."""
         if not track_state.target_locked:

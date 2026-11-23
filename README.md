@@ -1,6 +1,16 @@
-# Microduck robot brain
+# Microduck Robot Brain
 
-Microduck robot brain separates high-level intent parsing, reactive behavior planning, and low-level motor policy execution for the Microduck 14-DOF biped. Motor control, RL policies, and hardware safety run inside `robotd`. The brain selects what to do and which skills to run.
+[![CI](https://github.com/eric-rolph/microduck-robot-brain/actions/workflows/ci.yml/badge.svg)](https://github.com/eric-rolph/microduck-robot-brain/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![C++20 RT](https://img.shields.io/badge/C%2B%2B20-SCHED__FIFO%20%2B%20SeqLock-00599C?logo=cplusplus&logoColor=white)](CMakeLists.txt)
+[![MuJoCo 3+](https://img.shields.io/badge/MuJoCo-50Hz%20Sim--to--Real-fbbf24)](microduck_brain/sim/env.py)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-34d399)](LICENSE)
+
+**Microduck Robot Brain (DuckBrain)** separates high-level stateless intent parsing, reactive behavior planning, and low-level 50 Hz neural motor policy execution for the **Pollen Robotics Microduck 14-DOF biped**. Motor control, RL locomotion policies, and hardware safety run inside `robotd`; DuckBrain selects what to do, tracks targets via closed-loop visual servoing, and streams live telemetry to an offline-ready web cockpit.
+
+<p align="center">
+  <img src="docs/assets/microduck_demo.gif" alt="Microduck 50 Hz MuJoCo simulation with DuckBrain HUD" width="760" />
+</p>
 
 ## Why small transformers fail in motor loops
 
@@ -16,34 +26,15 @@ The architecture solves this by restricting the Transformer to one-shot speech p
 
 ## Four-tier pipeline
 
-```
-[ Speech / User input ]
-          |
-          v
-+-------------------------------------------------------------+
-| Tier 1: Intent extraction (stateless transformer / SLM)     |
-| Extracts typed JSON goal once, drops context                |
-+------------------------------+------------------------------+
-                               | ParsedIntent
-                               v
-+-------------------------------------------------------------+
-| Tier 2: WorldState sanitization (10 to 20 Hz)               |
-| Schmitt trigger hysteresis and temporal majority voting     |
-+------------------------------+------------------------------+
-                               | Debounced tokens
-                               v
-+-------------------------------------------------------------+
-| Tier 3: Behavior tree (10 to 20 Hz)                         |
-| Dynamic sequences, selectors, and ambient parallel blending |
-| Expressions strictly subordinate to gait balance            |
-+------------------------------+------------------------------+
-                               | Kinematic command (vx, vy, wz, roll, pitch)
-                               v
-+-------------------------------------------------------------+
-| Tier 4: robotd execution (50 to 100 Hz real-time)           |
-| Core-pinned SCHED_FIFO loop, POSIX shared memory (SeqLock)  |
-| Attitude command filter -> 48D ONNX policy -> 12 leg PD     |
-+-------------------------------------------------------------+
+```mermaid
+flowchart TD
+    U["Speech / Natural-Language Input"] --> T1
+    T1["Tier 1: Stateless Intent Extraction<br/>One-shot JSON goal parser (zero ongoing KV cache)"] -->|"ParsedIntent"| T2
+    T2["Tier 2: WorldState Sanitization (10–20 Hz)<br/>Schmitt trigger hysteresis, temporal debouncing, 8x8 ToF & SORT visual track"] -->|"Debounced tokens"| T3
+    T3["Tier 3: Reactive Behavior Tree (10–20 Hz)<br/>Visual servoing, asymmetric ambient blending & stability-gated expressions"] -->|"Kinematic cmd (vx, vy, wz, head)"| T4
+    T4["Tier 4: robotd Real-Time Execution (50–100 Hz)<br/>Core-pinned SCHED_FIFO, lock-free POSIX SeqLock, 61D ONNX policy -> 14 XL330 servos"]
+    T2 -.->|"10 Hz SSE telemetry"| DASH["Live Web Telemetry & Command Cockpit<br/>8x8 ToF heatmap · BAM M6 sag · 1-click skills · E-STOP"]
+    DASH -.->|"POST /api/command"| T1
 ```
 
 ### Tier 1: Stateless intent extraction
@@ -135,11 +126,32 @@ microduck-robot-brain/
 └── tests/                      # Pytest unit & integration test suite
 ```
 
+## Live web telemetry & command cockpit
+
+Launch the zero-dependency HTTP + Server-Sent Events cockpit (`microduck_brain/dashboard.py`, stdlib-only so it runs out of the box on Raspberry Pi CM4 with no web framework dependencies) alongside either the physical robot or MuJoCo simulation:
+
+```bash
+# Physical robot (or --dry-run offline test) with live cockpit at http://127.0.0.1:8765
+microduck-run --dry-run --interactive --dashboard
+
+# Headless MuJoCo simulation with live cockpit
+microduck-sim --steps 500 --onnx models/microduck_walk.onnx --dashboard
+```
+
+<p align="center">
+  <img src="docs/assets/dashboard_cockpit.png" alt="Microduck DuckBrain live web telemetry cockpit" width="760" />
+</p>
+
 ## Quick start
 
 ### Python package and tests
 
-Install dependencies:
+Install lightweight core runtime (ideal for Raspberry Pi CM4 onboard deployment without PyTorch/MuJoCo):
+```bash
+pip install -e .
+```
+
+Or install the full simulation, vision, and test stack:
 ```bash
 pip install -e ".[dev]"
 ```
@@ -149,9 +161,12 @@ Run tests:
 python -m pytest tests/ -v
 ```
 
-Run simulation:
+CLI entrypoints installed with the package:
 ```bash
-python scripts/run_simulation.py
+microduck-sim --steps 250 --onnx models/microduck_walk.onnx --headless
+microduck-eval
+microduck-check --dry-run
+microduck-run --interactive --dashboard
 ```
 
 ### Build C++ real-time daemon

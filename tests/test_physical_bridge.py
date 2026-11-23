@@ -215,3 +215,70 @@ def test_physical_controller_intent_dispatch_and_behavior_trees():
     ctrl.tick_behavior_tree()
     ctrl.client.stop.assert_called_once()
     ctrl.client.move.assert_not_called()
+
+
+def test_world_state_visual_tracking_debounces_loss_and_type_hints():
+    import typing
+    hints = typing.get_type_hints(WorldState.update_visual_tracking)
+    assert "target_locked" in hints
+
+    ws = WorldState()
+    for _ in range(5):
+        ws.update_visual_tracking(True, bearing_rad=0.15, range_m=0.5, track_id=7)
+    assert ws.target_locked is True
+    assert ws.ball_visible is True
+
+    # Losing target lock must debounce ball_visible back to False
+    for _ in range(5):
+        ws.update_visual_tracking(False, bearing_rad=0.0, range_m=1.0, track_id=None)
+    assert ws.target_locked is False
+    assert ws.ball_visible is False
+
+
+def test_visual_track_approach_node_executes_without_name_error():
+    from microduck_brain.behavior_tree import VisualTrackApproachNode
+    from microduck_brain.skill_latch import SkillStatus
+
+    cmds = []
+    node = VisualTrackApproachNode("TrackApproach", velocity_callback=lambda vx, vy, wz: cmds.append((vx, vy, wz)))
+    status = node.tick({"target_locked": True, "visual_bearing_rad": 0.2, "visual_range_m": 0.5})
+    assert status == SkillStatus.RUNNING
+    assert len(cmds) == 1
+    assert cmds[0][0] > 0.0 and cmds[0][2] < 0.0
+
+
+def test_physical_controller_visual_servoing_and_search_timeout():
+    ctrl = PhysicalMicroduckController(dry_run=False)
+    ctrl.client = MagicMock()
+    ctrl.tof_client = MagicMock()
+    ctrl.running = True
+    ctrl.world_state.update_battery_voltage(7.6)
+
+    assert ctrl.set_intent("fetch ball") == "FETCH"
+    # Stream locked target slightly to the right at 0.50m
+    for _ in range(5):
+        ctrl.update_vision_observation(target_locked=True, bearing_rad=0.20, range_m=0.50, track_id=1)
+    ctrl.client.reset_mock()
+    ctrl.tick_behavior_tree()
+    assert ctrl.client.move.called
+    kwargs = ctrl.client.move.call_args.kwargs
+    assert kwargs["vx"] > 0.0
+    assert kwargs["vyaw"] < 0.0  # steers right toward positive bearing
+
+    # Target reaches grasp range -> completes pickup + quack
+    ctrl.client.reset_mock()
+    ctrl.update_vision_observation(target_locked=True, bearing_rad=0.02, range_m=0.19, track_id=1)
+    ctrl.tick_behavior_tree()
+    ctrl.client.do_skill.assert_called_once_with("ground_pick")
+    ctrl.client.play_sound.assert_called_once_with("quack")
+    assert ctrl.active_intent == "WAIT"
+
+    # Search timeout triggers FailureExpressionBranch (HEAD_TILT) when stable
+    ctrl.client.reset_mock()
+    for _ in range(5):
+        ctrl.update_vision_observation(target_locked=False)
+    ctrl.search_timeout_ticks = 2
+    assert ctrl.set_intent("fetch ball") == "FETCH"
+    ctrl.tick_behavior_tree()
+    ctrl.tick_behavior_tree()
+    assert "HEAD_TILT" in ctrl.blackboard.data["executed_gestures"]
